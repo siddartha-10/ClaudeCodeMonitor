@@ -117,6 +117,11 @@ export type GitHubIssue = {
   updatedAt: string;
 };
 
+export type GitHubIssuesResponse = {
+  total: number;
+  issues: GitHubIssue[];
+};
+
 export type TokenUsageBreakdown = {
   totalTokens: number;
   inputTokens: number;

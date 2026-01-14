@@ -24,6 +24,7 @@ type GitDiffPanelProps = {
   logBehindEntries?: GitLogEntry[];
   logUpstream?: string | null;
   issues?: GitHubIssue[];
+  issuesTotal?: number;
   issuesLoading?: boolean;
   issuesError?: string | null;
   gitRemoteUrl?: string | null;
@@ -113,6 +114,7 @@ export function GitDiffPanel({
   logBehindEntries = [],
   logUpstream = null,
   issues = [],
+  issuesTotal = 0,
   issuesLoading = false,
   issuesError = null,
 }: GitDiffPanelProps) {
@@ -244,7 +246,7 @@ export function GitDiffPanel({
             {issuesLoading && <span className="git-panel-spinner" aria-hidden />}
           </div>
           <div className="git-log-sync">
-            <span>{issues.length} open</span>
+            <span>{issuesTotal} open</span>
           </div>
         </>
       )}

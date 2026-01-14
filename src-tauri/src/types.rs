@@ -48,6 +48,12 @@ pub(crate) struct GitHubIssue {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct GitHubIssuesResponse {
+    pub(crate) total: usize,
+    pub(crate) issues: Vec<GitHubIssue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct BranchInfo {
     pub(crate) name: String,
     pub(crate) last_commit: i64,

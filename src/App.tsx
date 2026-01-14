@@ -180,6 +180,7 @@ function MainApp() {
   } = useGitLog(activeWorkspace, shouldLoadGitLog);
   const {
     issues: gitIssues,
+    total: gitIssuesTotal,
     isLoading: gitIssuesLoading,
     error: gitIssuesError,
   } = useGitHubIssues(activeWorkspace, gitPanelMode === "issues");
@@ -776,6 +777,7 @@ function MainApp() {
                   logBehindEntries={gitLogBehindEntries}
                   logUpstream={gitLogUpstream}
                   issues={gitIssues}
+                  issuesTotal={gitIssuesTotal}
                   issuesLoading={gitIssuesLoading}
                   issuesError={gitIssuesError}
                   gitRemoteUrl={gitRemoteUrl}
@@ -886,6 +888,7 @@ function MainApp() {
                   logBehindEntries={gitLogBehindEntries}
                   logUpstream={gitLogUpstream}
                   issues={gitIssues}
+                  issuesTotal={gitIssuesTotal}
                   issuesLoading={gitIssuesLoading}
                   issuesError={gitIssuesError}
                   gitRemoteUrl={gitRemoteUrl}
@@ -1040,6 +1043,7 @@ function MainApp() {
                     logBehindEntries={gitLogBehindEntries}
                     logUpstream={gitLogUpstream}
                     issues={gitIssues}
+                    issuesTotal={gitIssuesTotal}
                     issuesLoading={gitIssuesLoading}
                     issuesError={gitIssuesError}
                     gitRemoteUrl={gitRemoteUrl}

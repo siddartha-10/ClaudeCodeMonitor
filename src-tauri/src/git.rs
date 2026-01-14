@@ -5,7 +5,8 @@ use tokio::process::Command;
 
 use crate::state::AppState;
 use crate::types::{
-    BranchInfo, GitFileDiff, GitFileStatus, GitHubIssue, GitLogEntry, GitLogResponse,
+    BranchInfo, GitFileDiff, GitFileStatus, GitHubIssue, GitHubIssuesResponse, GitLogEntry,
+    GitLogResponse,
 };
 use crate::utils::normalize_git_path;
 
@@ -398,7 +399,7 @@ pub(crate) async fn get_git_remote(
 pub(crate) async fn get_github_issues(
     workspace_id: String,
     state: State<'_, AppState>,
-) -> Result<Vec<GitHubIssue>, String> {
+) -> Result<GitHubIssuesResponse, String> {
     let workspaces = state.workspaces.lock().await;
     let entry = workspaces
         .get(&workspace_id)
@@ -460,7 +461,28 @@ pub(crate) async fn get_github_issues(
 
     let issues: Vec<GitHubIssue> =
         serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
-    Ok(issues)
+
+    let search_query = format!("repo:{repo_name} is:issue is:open");
+    let search_query = search_query.replace(' ', "+");
+    let total = match Command::new("gh")
+        .args([
+            "api",
+            &format!("/search/issues?q={search_query}"),
+            "--jq",
+            ".total_count",
+        ])
+        .current_dir(&entry.path)
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<usize>()
+            .unwrap_or(issues.len()),
+        _ => issues.len(),
+    };
+
+    Ok(GitHubIssuesResponse { total, issues })
 }
 
 #[tauri::command]

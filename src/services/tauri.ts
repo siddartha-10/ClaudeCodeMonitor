@@ -9,7 +9,7 @@ import type {
 import type {
   GitFileDiff,
   GitFileStatus,
-  GitHubIssue,
+  GitHubIssuesResponse,
   GitLogResponse,
   ReviewTarget,
 } from "../types";
@@ -151,7 +151,7 @@ export async function getGitRemote(workspace_id: string): Promise<string | null>
 
 export async function getGitHubIssues(
   workspace_id: string,
-): Promise<GitHubIssue[]> {
+): Promise<GitHubIssuesResponse> {
   return invoke("get_github_issues", { workspaceId: workspace_id });
 }
 

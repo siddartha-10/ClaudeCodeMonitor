@@ -4,12 +4,14 @@ import { getGitHubIssues } from "../services/tauri";
 
 type GitHubIssuesState = {
   issues: GitHubIssue[];
+  total: number;
   isLoading: boolean;
   error: string | null;
 };
 
 const emptyState: GitHubIssuesState = {
   issues: [],
+  total: 0,
   isLoading: false,
   error: null,
 };
@@ -32,7 +34,7 @@ export function useGitHubIssues(
     requestIdRef.current = requestId;
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
-      const issues = await getGitHubIssues(workspaceId);
+      const response = await getGitHubIssues(workspaceId);
       if (
         requestIdRef.current !== requestId ||
         workspaceIdRef.current !== workspaceId
@@ -40,7 +42,8 @@ export function useGitHubIssues(
         return;
       }
       setState({
-        issues,
+        issues: response.issues,
+        total: response.total,
         isLoading: false,
         error: null,
       });
@@ -54,6 +57,7 @@ export function useGitHubIssues(
       }
       setState({
         issues: [],
+        total: 0,
         isLoading: false,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -78,6 +82,7 @@ export function useGitHubIssues(
 
   return {
     issues: state.issues,
+    total: state.total,
     isLoading: state.isLoading,
     error: state.error,
     refresh,
