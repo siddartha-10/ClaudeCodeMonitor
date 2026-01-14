@@ -74,7 +74,7 @@ do
   install_name_tool -change "${candidate}" "@rpath/libcrypto.3.dylib" "${bin_path}" 2>/dev/null || true
 done
 
-if ! otool -l "${bin_path}" | rg -q "@executable_path/../Frameworks"; then
+if ! otool -l "${bin_path}" | { command -v rg >/dev/null 2>&1 && rg -q "@executable_path/../Frameworks" || grep -q "@executable_path/../Frameworks"; }; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" "${bin_path}"
 fi
 
