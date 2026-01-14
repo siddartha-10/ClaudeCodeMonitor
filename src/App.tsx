@@ -20,23 +20,13 @@ import "./styles/settings.css";
 import "./styles/compact-base.css";
 import "./styles/compact-phone.css";
 import "./styles/compact-tablet.css";
-import { Sidebar } from "./components/Sidebar";
 import { WorktreePrompt } from "./components/WorktreePrompt";
-import { Home } from "./components/Home";
-import { MainHeader } from "./components/MainHeader";
-import { Messages } from "./components/Messages";
-import { ApprovalToasts } from "./components/ApprovalToasts";
-import { UpdateToast } from "./components/UpdateToast";
-import { Composer } from "./components/Composer";
-import { GitDiffPanel } from "./components/GitDiffPanel";
-import { GitDiffViewer } from "./components/GitDiffViewer";
-import { DebugPanel } from "./components/DebugPanel";
-import { PlanPanel } from "./components/PlanPanel";
 import { AboutView } from "./components/AboutView";
-import { TabBar } from "./components/TabBar";
-import { TabletNav } from "./components/TabletNav";
 import { SettingsView } from "./components/SettingsView";
-import { ArrowLeft } from "lucide-react";
+import { DesktopLayout } from "./components/layouts/DesktopLayout";
+import { TabletLayout } from "./components/layouts/TabletLayout";
+import { PhoneLayout } from "./components/layouts/PhoneLayout";
+import { useLayoutNodes } from "./hooks/useLayoutNodes";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useThreads } from "./hooks/useThreads";
 import { useWindowDrag } from "./hooks/useWindowDrag";
@@ -57,15 +47,13 @@ import { useResizablePanels } from "./hooks/useResizablePanels";
 import { useLayoutMode } from "./hooks/useLayoutMode";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useUpdater } from "./hooks/useUpdater";
-import { clampUiScale, UI_SCALE_STEP } from "./utils/uiScale";
 import { useComposerImages } from "./hooks/useComposerImages";
-import type {
-  AccessMode,
-  AppSettings,
-  DiffLineReference,
-  QueuedMessage,
-  WorkspaceInfo
-} from "./types";
+import { useQueuedSend } from "./hooks/useQueuedSend";
+import { useWorktreePrompt } from "./hooks/useWorktreePrompt";
+import { useUiScaleShortcuts } from "./hooks/useUiScaleShortcuts";
+import { useWorkspaceSelection } from "./hooks/useWorkspaceSelection";
+import { useNewAgentShortcut } from "./hooks/useNewAgentShortcut";
+import type { AccessMode, DiffLineReference, QueuedMessage, WorkspaceInfo } from "./types";
 
 function useWindowLabel() {
   const [label, setLabel] = useState("main");
@@ -87,7 +75,16 @@ function MainApp() {
     saveSettings,
     doctor
   } = useAppSettings();
-  const uiScale = clampUiScale(appSettings.uiScale);
+  const {
+    uiScale,
+    scaleShortcutTitle,
+    scaleShortcutText,
+    queueSaveSettings,
+  } = useUiScaleShortcuts({
+    settings: appSettings,
+    setSettings: setAppSettings,
+    saveSettings,
+  });
   const {
     sidebarWidth,
     rightPanelWidth,
@@ -112,9 +109,6 @@ function MainApp() {
     "projects" | "codex" | "git" | "log"
   >("codex");
   const tabletTab = activeTab === "projects" ? "codex" : activeTab;
-  const [queuedByThread, setQueuedByThread] = useState<
-    Record<string, QueuedMessage[]>
-  >({});
   const [composerDraftsByThread, setComposerDraftsByThread] = useState<
     Record<string, string>
   >({});
@@ -127,15 +121,6 @@ function MainApp() {
     const stored = localStorage.getItem("reduceTransparency");
     return stored === "true";
   });
-  const [flushingByThread, setFlushingByThread] = useState<
-    Record<string, boolean>
-  >({});
-  const [worktreePrompt, setWorktreePrompt] = useState<{
-    workspace: WorkspaceInfo;
-    branch: string;
-    isSubmitting: boolean;
-    error: string | null;
-  } | null>(null);
   const {
     debugOpen,
     setDebugOpen,
@@ -149,29 +134,6 @@ function MainApp() {
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const updater = useUpdater({ onDebug: addDebugEntry });
-
-  const scaleShortcutLabel = (() => {
-    if (typeof navigator === "undefined") {
-      return "Ctrl";
-    }
-    return /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Cmd" : "Ctrl";
-  })();
-  const scaleShortcutTitle = `${scaleShortcutLabel}+ and ${scaleShortcutLabel}-, ${scaleShortcutLabel}+0 to reset.`;
-  const scaleShortcutText = `Shortcuts: ${scaleShortcutLabel}+ and ${scaleShortcutLabel}-, ${scaleShortcutLabel}+0 to reset.`;
-
-  const saveQueueRef = useRef(Promise.resolve());
-  const queueSaveSettings = useCallback(
-    (next: AppSettings) => {
-      const task = () => saveSettings(next);
-      const queued = saveQueueRef.current.then(task, task);
-      saveQueueRef.current = queued.then(
-        () => undefined,
-        () => undefined
-      );
-      return queued;
-    },
-    [saveSettings]
-  );
 
   const {
     workspaces,
@@ -202,66 +164,6 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem("reduceTransparency", String(reduceTransparency));
   }, [reduceTransparency]);
-
-  const handleScaleDelta = useCallback(
-    (delta: number) => {
-      setAppSettings((current) => {
-        const nextScale = clampUiScale(current.uiScale + delta);
-        if (nextScale === current.uiScale) {
-          return current;
-        }
-        const nextSettings = {
-          ...current,
-          uiScale: nextScale
-        };
-        void queueSaveSettings(nextSettings);
-        return nextSettings;
-      });
-    },
-    [queueSaveSettings, setAppSettings]
-  );
-
-  const handleScaleReset = useCallback(() => {
-    setAppSettings((current) => {
-      if (current.uiScale === 1) {
-        return current;
-      }
-      const nextSettings = {
-        ...current,
-        uiScale: 1
-      };
-      void queueSaveSettings(nextSettings);
-      return nextSettings;
-    });
-  }, [queueSaveSettings, setAppSettings]);
-
-  useEffect(() => {
-    const handleScaleShortcut = (event: KeyboardEvent) => {
-      if (!event.metaKey && !event.ctrlKey) {
-        return;
-      }
-      if (event.altKey) {
-        return;
-      }
-      const key = event.key;
-      const isIncrease = key === "+" || key === "=";
-      const isDecrease = key === "-" || key === "_";
-      const isReset = key === "0";
-      if (!isIncrease && !isDecrease && !isReset) {
-        return;
-      }
-      event.preventDefault();
-      if (isReset) {
-        handleScaleReset();
-        return;
-      }
-      handleScaleDelta(isDecrease ? -UI_SCALE_STEP : UI_SCALE_STEP);
-    };
-    window.addEventListener("keydown", handleScaleShortcut);
-    return () => {
-      window.removeEventListener("keydown", handleScaleShortcut);
-    };
-  }, [handleScaleDelta, handleScaleReset]);
 
   const { status: gitStatus, refresh: refreshGitStatus } =
     useGitStatus(activeWorkspace);
@@ -364,6 +266,36 @@ function MainApp() {
     setImagesForThread,
     removeImagesForThread,
   } = useComposerImages({ activeThreadId, activeWorkspaceId });
+  const { exitDiffView, selectWorkspace, selectHome } = useWorkspaceSelection({
+    workspaces,
+    isCompact,
+    setActiveTab,
+    setActiveWorkspaceId,
+    updateWorkspaceSettings,
+    setCenterMode,
+    setSelectedDiffPath,
+  });
+  const {
+    worktreePrompt,
+    openPrompt: openWorktreePrompt,
+    confirmPrompt: confirmWorktreePrompt,
+    cancelPrompt: cancelWorktreePrompt,
+    updateBranch: updateWorktreeBranch,
+  } = useWorktreePrompt({
+    addWorktreeAgent,
+    connectWorkspace,
+    onSelectWorkspace: selectWorkspace,
+    onCompactActivate: isCompact ? () => setActiveTab("codex") : undefined,
+    onError: (message) => {
+      addDebugEntry({
+        id: `${Date.now()}-client-add-worktree-error`,
+        timestamp: Date.now(),
+        source: "error",
+        label: "worktree/add error",
+        payload: message,
+      });
+    },
+  });
 
   const latestAgentRuns = useMemo(() => {
     const entries: Array<{
@@ -432,9 +364,16 @@ function MainApp() {
   const isReviewing = activeThreadId
     ? threadStatusById[activeThreadId]?.isReviewing ?? false
     : false;
-  const activeQueue = activeThreadId
-    ? queuedByThread[activeThreadId] ?? []
-    : [];
+  const { activeQueue, handleSend, removeQueuedMessage } = useQueuedSend({
+    activeThreadId,
+    isProcessing,
+    isReviewing,
+    activeWorkspace,
+    connectWorkspace,
+    sendUserMessage,
+    startReview,
+    clearActiveImages,
+  });
   const activeDraft = activeThreadId
     ? composerDraftsByThread[activeThreadId] ?? ""
     : "";
@@ -489,21 +428,14 @@ function MainApp() {
     listThreadsForWorkspace
   });
 
-  // Cmd+N shortcut to create new agent in active workspace
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-      const modifierKey = isMac ? event.metaKey : event.ctrlKey;
-      if (modifierKey && event.key === "n") {
-        event.preventDefault();
-        if (activeWorkspace) {
-          void handleAddAgent(activeWorkspace);
-        }
+  useNewAgentShortcut({
+    isEnabled: Boolean(activeWorkspace),
+    onTrigger: () => {
+      if (activeWorkspace) {
+        void handleAddAgent(activeWorkspace);
       }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeWorkspace, handleAddAgent]);
+    },
+  });
 
   async function handleAddWorkspace() {
     try {
@@ -527,24 +459,6 @@ function MainApp() {
     }
   }
 
-  function selectWorkspace(workspaceId: string) {
-    const target = workspaces.find((entry) => entry.id === workspaceId);
-    if (target?.settings.sidebarCollapsed) {
-      void updateWorkspaceSettings(workspaceId, {
-        ...target.settings,
-        sidebarCollapsed: false
-      });
-    }
-    setActiveWorkspaceId(workspaceId);
-    if (isCompact) {
-      setActiveTab("codex");
-    }
-  }
-
-  function exitDiffView() {
-    setCenterMode("chat");
-    setSelectedDiffPath(null);
-  }
 
   async function handleAddAgent(workspace: (typeof workspaces)[number]) {
     exitDiffView();
@@ -564,52 +478,7 @@ function MainApp() {
     workspace: (typeof workspaces)[number]
   ) {
     exitDiffView();
-    const defaultBranch = `codex/${new Date()
-      .toISOString()
-      .slice(0, 10)}-${Math.random().toString(36).slice(2, 6)}`;
-    setWorktreePrompt({
-      workspace,
-      branch: defaultBranch,
-      isSubmitting: false,
-      error: null
-    });
-  }
-
-  async function handleConfirmWorktreePrompt() {
-    if (!worktreePrompt || worktreePrompt.isSubmitting) {
-      return;
-    }
-    const { workspace, branch } = worktreePrompt;
-    setWorktreePrompt((prev) =>
-      prev ? { ...prev, isSubmitting: true, error: null } : prev
-    );
-    try {
-      const worktreeWorkspace = await addWorktreeAgent(workspace, branch);
-      if (!worktreeWorkspace) {
-        setWorktreePrompt(null);
-        return;
-      }
-      selectWorkspace(worktreeWorkspace.id);
-      if (!worktreeWorkspace.connected) {
-        await connectWorkspace(worktreeWorkspace);
-      }
-      if (isCompact) {
-        setActiveTab("codex");
-      }
-      setWorktreePrompt(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setWorktreePrompt((prev) =>
-        prev ? { ...prev, isSubmitting: false, error: message } : prev
-      );
-      addDebugEntry({
-        id: `${Date.now()}-client-add-worktree-error`,
-        timestamp: Date.now(),
-        source: "error",
-        label: "worktree/add error",
-        payload: message
-      });
-    }
+    openWorktreePrompt(workspace);
   }
 
   function handleSelectDiff(path: string) {
@@ -658,85 +527,6 @@ function MainApp() {
       createdAt: Date.now()
     });
   }
-
-  async function handleSend(text: string, images: string[] = []) {
-    const trimmed = text.trim();
-    const shouldIgnoreImages = trimmed.startsWith("/review");
-    const nextImages = shouldIgnoreImages ? [] : images;
-    if (!trimmed && nextImages.length === 0) {
-      return;
-    }
-    if (activeThreadId && threadStatusById[activeThreadId]?.isReviewing) {
-      return;
-    }
-    if (isProcessing && activeThreadId) {
-      const item: QueuedMessage = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        text: trimmed,
-        createdAt: Date.now(),
-        images: nextImages,
-      };
-      setQueuedByThread((prev) => ({
-        ...prev,
-        [activeThreadId]: [...(prev[activeThreadId] ?? []), item]
-      }));
-      clearActiveImages();
-      return;
-    }
-    if (activeWorkspace && !activeWorkspace.connected) {
-      await connectWorkspace(activeWorkspace);
-    }
-    if (trimmed.startsWith("/review")) {
-      await startReview(trimmed);
-      clearActiveImages();
-      return;
-    }
-    await sendUserMessage(trimmed, nextImages);
-    clearActiveImages();
-  }
-
-  useEffect(() => {
-    if (!activeThreadId || isProcessing || isReviewing) {
-      return;
-    }
-    if (flushingByThread[activeThreadId]) {
-      return;
-    }
-    const queue = queuedByThread[activeThreadId] ?? [];
-    if (queue.length === 0) {
-      return;
-    }
-    const threadId = activeThreadId;
-    const nextItem = queue[0];
-    setFlushingByThread((prev) => ({ ...prev, [threadId]: true }));
-    setQueuedByThread((prev) => ({
-      ...prev,
-      [threadId]: (prev[threadId] ?? []).slice(1)
-    }));
-    (async () => {
-      try {
-        if (nextItem.text.trim().startsWith("/review")) {
-          await startReview(nextItem.text);
-        } else {
-          await sendUserMessage(nextItem.text, nextItem.images ?? []);
-        }
-      } catch {
-        setQueuedByThread((prev) => ({
-          ...prev,
-          [threadId]: [nextItem, ...(prev[threadId] ?? [])]
-        }));
-      } finally {
-        setFlushingByThread((prev) => ({ ...prev, [threadId]: false }));
-      }
-    })();
-  }, [
-    activeThreadId,
-    flushingByThread,
-    isProcessing,
-    isReviewing,
-    queuedByThread,
-    sendUserMessage
-  ]);
 
   const handleDebugClick = () => {
     if (isCompact) {
@@ -797,612 +587,203 @@ function MainApp() {
   }${isTablet ? " layout-tablet" : ""}${
     reduceTransparency ? " reduced-transparency" : ""
   }`;
-
-  const sidebarNode = (
-    <Sidebar
-      workspaces={workspaces}
-      threadsByWorkspace={threadsByWorkspace}
-      threadStatusById={threadStatusById}
-      threadListLoadingByWorkspace={threadListLoadingByWorkspace}
-      activeWorkspaceId={activeWorkspaceId}
-      activeThreadId={activeThreadId}
-      accountRateLimits={activeRateLimits}
-      onOpenSettings={handleOpenSettings}
-      onOpenDebug={handleDebugClick}
-      hasDebugAlerts={hasDebugAlerts}
-      onAddWorkspace={handleAddWorkspace}
-      onSelectHome={() => {
-        exitDiffView();
-        setActiveWorkspaceId(null);
-        if (isCompact) {
-          setActiveTab("projects");
-        }
-      }}
-      onSelectWorkspace={(workspaceId) => {
-        exitDiffView();
-        selectWorkspace(workspaceId);
-      }}
-      onConnectWorkspace={async (workspace) => {
-        await connectWorkspace(workspace);
-        if (isCompact) {
-          setActiveTab("codex");
-        }
-      }}
-      onAddAgent={handleAddAgent}
-      onAddWorktreeAgent={handleAddWorktreeAgent}
-      onToggleWorkspaceCollapse={(workspaceId, collapsed) => {
-        const target = workspaces.find((entry) => entry.id === workspaceId);
-        if (!target) {
-          return;
-        }
-        void updateWorkspaceSettings(workspaceId, {
-          ...target.settings,
-          sidebarCollapsed: collapsed
-        });
-      }}
-      onSelectThread={(workspaceId, threadId) => {
-        exitDiffView();
-        selectWorkspace(workspaceId);
-        setActiveThreadId(threadId, workspaceId);
-      }}
-      onDeleteThread={(workspaceId, threadId) => {
-        removeThread(workspaceId, threadId);
-        setComposerDraftsByThread((prev) => {
-          if (!(threadId in prev)) {
-            return prev;
-          }
-          const { [threadId]: _, ...rest } = prev;
-          return rest;
-        });
-        removeImagesForThread(threadId);
-      }}
-      onDeleteWorkspace={(workspaceId) => {
-        void removeWorkspace(workspaceId);
-      }}
-      onDeleteWorktree={(workspaceId) => {
-        void removeWorktree(workspaceId);
-      }}
-    />
-  );
-
-  const activeThreadStatus = activeThreadId
-    ? threadStatusById[activeThreadId] ?? null
-    : null;
-
-  const messagesNode = (
-    <Messages
-      items={activeItems}
-      isThinking={
-        activeThreadId
-          ? threadStatusById[activeThreadId]?.isProcessing ?? false
-          : false
+  const {
+    sidebarNode,
+    messagesNode,
+    composerNode,
+    approvalToastsNode,
+    updateToastNode,
+    homeNode,
+    mainHeaderNode,
+    desktopTopbarLeftNode,
+    tabletNavNode,
+    tabBarNode,
+    gitDiffPanelNode,
+    gitDiffViewerNode,
+    planPanelNode,
+    debugPanelNode,
+    debugPanelFullNode,
+    compactEmptyCodexNode,
+    compactEmptyGitNode,
+    compactGitBackNode,
+  } = useLayoutNodes({
+    workspaces,
+    threadsByWorkspace,
+    threadStatusById,
+    threadListLoadingByWorkspace,
+    activeWorkspaceId,
+    activeThreadId,
+    activeItems,
+    activeRateLimits,
+    approvals,
+    handleApprovalDecision,
+    onOpenSettings: handleOpenSettings,
+    onOpenDebug: handleDebugClick,
+    hasDebugAlerts,
+    onAddWorkspace: handleAddWorkspace,
+    onSelectHome: selectHome,
+    onSelectWorkspace: (workspaceId) => {
+      exitDiffView();
+      selectWorkspace(workspaceId);
+    },
+    onConnectWorkspace: async (workspace) => {
+      await connectWorkspace(workspace);
+      if (isCompact) {
+        setActiveTab("codex");
       }
-      processingStartedAt={activeThreadStatus?.processingStartedAt ?? null}
-      lastDurationMs={activeThreadStatus?.lastDurationMs ?? null}
-    />
-  );
-
-  const composerNode = showComposer ? (
-    <Composer
-      onSend={handleSend}
-      onStop={interruptTurn}
-      canStop={canInterrupt}
-      disabled={
-        activeThreadId
-          ? threadStatusById[activeThreadId]?.isReviewing ?? false
-          : false
+    },
+    onAddAgent: handleAddAgent,
+    onAddWorktreeAgent: handleAddWorktreeAgent,
+    onToggleWorkspaceCollapse: (workspaceId, collapsed) => {
+      const target = workspaces.find((entry) => entry.id === workspaceId);
+      if (!target) {
+        return;
       }
-      contextUsage={activeTokenUsage}
-      queuedMessages={activeQueue}
-      sendLabel={isProcessing ? "Queue" : "Send"}
-      draftText={activeDraft}
-      onDraftChange={handleDraftChange}
-      attachedImages={activeImages}
-      onPickImages={pickImages}
-      onAttachImages={attachImages}
-      onRemoveImage={removeImage}
-      prefillDraft={prefillDraft}
-      onPrefillHandled={(id) => {
-        if (prefillDraft?.id === id) {
-          setPrefillDraft(null);
+      void updateWorkspaceSettings(workspaceId, {
+        ...target.settings,
+        sidebarCollapsed: collapsed,
+      });
+    },
+    onSelectThread: (workspaceId, threadId) => {
+      exitDiffView();
+      selectWorkspace(workspaceId);
+      setActiveThreadId(threadId, workspaceId);
+    },
+    onDeleteThread: (workspaceId, threadId) => {
+      removeThread(workspaceId, threadId);
+      setComposerDraftsByThread((prev) => {
+        if (!(threadId in prev)) {
+          return prev;
         }
-      }}
-      insertText={composerInsert}
-      onInsertHandled={(id) => {
-        if (composerInsert?.id === id) {
-          setComposerInsert(null);
-        }
-      }}
-      onEditQueued={(item) => {
-        if (!activeThreadId) {
-          return;
-        }
-        setQueuedByThread((prev) => ({
-          ...prev,
-          [activeThreadId]: (prev[activeThreadId] ?? []).filter(
-            (entry) => entry.id !== item.id
-          )
-        }));
-        setImagesForThread(activeThreadId, item.images ?? []);
-        setPrefillDraft(item);
-      }}
-      onDeleteQueued={(id) => {
-        if (!activeThreadId) {
-          return;
-        }
-        setQueuedByThread((prev) => ({
-          ...prev,
-          [activeThreadId]: (prev[activeThreadId] ?? []).filter(
-            (entry) => entry.id !== id
-          )
-        }));
-      }}
-      models={models}
-      selectedModelId={selectedModelId}
-      onSelectModel={setSelectedModelId}
-      reasoningOptions={reasoningOptions}
-      selectedEffort={selectedEffort}
-      onSelectEffort={setSelectedEffort}
-      accessMode={accessMode}
-      onSelectAccessMode={setAccessMode}
-      skills={skills}
-      prompts={prompts}
-      files={files}
-      textareaRef={composerInputRef}
-    />
-  ) : null;
-
-  const desktopLayout = (
-    <>
-      {sidebarNode}
-      <div
-        className="sidebar-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize sidebar"
-        onMouseDown={onSidebarResizeStart}
-      />
-
-      <section className="main">
-        <UpdateToast
-          state={updater.state}
-          onUpdate={updater.startUpdate}
-          onDismiss={updater.dismiss}
-        />
-        {showHome && (
-          <Home
-            onOpenProject={handleAddWorkspace}
-            onAddWorkspace={handleAddWorkspace}
-            latestAgentRuns={latestAgentRuns}
-            isLoadingLatestAgents={isLoadingLatestAgents}
-            onSelectThread={(workspaceId, threadId) => {
-              exitDiffView();
-              selectWorkspace(workspaceId);
-              setActiveThreadId(threadId, workspaceId);
-              if (isCompact) {
-                setActiveTab("codex");
-              }
-            }}
-          />
-        )}
-
-        {activeWorkspace && !showHome && (
-          <>
-            <div className="main-topbar" data-tauri-drag-region>
-              <div className="main-topbar-left">
-                {centerMode === "diff" && (
-                  <button
-                    className="icon-button back-button"
-                    onClick={() => {
-                      setCenterMode("chat");
-                      setSelectedDiffPath(null);
-                    }}
-                    aria-label="Back to chat"
-                  >
-                    <ArrowLeft aria-hidden />
-                  </button>
-                )}
-                <MainHeader
-                  workspace={activeWorkspace}
-                  parentName={activeParentWorkspace?.name ?? null}
-                  worktreeLabel={worktreeLabel}
-                  disableBranchMenu={isWorktreeWorkspace}
-                  parentPath={activeParentWorkspace?.path ?? null}
-                  worktreePath={
-                    isWorktreeWorkspace ? activeWorkspace.path : null
-                  }
-                  branchName={gitStatus.branchName || "unknown"}
-                  branches={branches}
-                  onCheckoutBranch={handleCheckoutBranch}
-                  onCreateBranch={handleCreateBranch}
-                />
-              </div>
-              <div className="actions">{null}</div>
-            </div>
-            <ApprovalToasts
-              approvals={approvals}
-              workspaces={workspaces}
-              onDecision={handleApprovalDecision}
-            />
-            <div className="content">
-              {centerMode === "diff" ? (
-                <GitDiffViewer
-                  diffs={gitDiffs}
-                  selectedPath={selectedDiffPath}
-                  isLoading={isDiffLoading}
-                  error={diffError}
-                  onLineReference={handleDiffLineReference}
-                  onActivePathChange={handleActiveDiffPath}
-                />
-              ) : (
-                messagesNode
-              )}
-            </div>
-
-            <div
-              className="right-panel-resizer"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize right panel"
-              onMouseDown={onRightPanelResizeStart}
-            />
-            <div
-              className={`right-panel ${hasActivePlan ? "" : "plan-collapsed"}`}
-            >
-              <div className="right-panel-top">
-                <GitDiffPanel
-                  mode={gitPanelMode}
-                  onModeChange={setGitPanelMode}
-                  branchName={gitStatus.branchName || "unknown"}
-                  totalAdditions={gitStatus.totalAdditions}
-                  totalDeletions={gitStatus.totalDeletions}
-                  fileStatus={fileStatus}
-                  error={gitStatus.error}
-                  logError={gitLogError}
-                  logLoading={gitLogLoading}
-                  files={gitStatus.files}
-                  selectedPath={selectedDiffPath}
-                  onSelectFile={handleSelectDiff}
-                  logEntries={gitLogEntries}
-                  logTotal={gitLogTotal}
-                  logAhead={gitLogAhead}
-                  logBehind={gitLogBehind}
-                  logAheadEntries={gitLogAheadEntries}
-                  logBehindEntries={gitLogBehindEntries}
-                  logUpstream={gitLogUpstream}
-                  issues={gitIssues}
-                  issuesTotal={gitIssuesTotal}
-                  issuesLoading={gitIssuesLoading}
-                  issuesError={gitIssuesError}
-                  gitRemoteUrl={gitRemoteUrl}
-                />
-              </div>
-              <div
-                className="right-panel-divider"
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label="Resize plan panel"
-                onMouseDown={onPlanPanelResizeStart}
-              />
-              <div className="right-panel-bottom">
-                <PlanPanel plan={activePlan} isProcessing={isProcessing} />
-              </div>
-            </div>
-
-            {composerNode}
-            <DebugPanel
-              entries={debugEntries}
-              isOpen={debugOpen}
-              onClear={clearDebugEntries}
-              onCopy={handleCopyDebug}
-              onResizeStart={onDebugPanelResizeStart}
-            />
-          </>
-        )}
-      </section>
-    </>
-  );
-
-  const tabletLayout = (
-    <>
-      <TabletNav activeTab={tabletTab} onSelect={setActiveTab} />
-      <div className="tablet-projects">{sidebarNode}</div>
-      <div
-        className="projects-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize projects"
-        onMouseDown={onSidebarResizeStart}
-      />
-      <section className="tablet-main">
-        <ApprovalToasts
-          approvals={approvals}
-          workspaces={workspaces}
-          onDecision={handleApprovalDecision}
-        />
-        <UpdateToast
-          state={updater.state}
-          onUpdate={updater.startUpdate}
-          onDismiss={updater.dismiss}
-        />
-        {showHome && (
-          <Home
-            onOpenProject={handleAddWorkspace}
-            onAddWorkspace={handleAddWorkspace}
-            latestAgentRuns={latestAgentRuns}
-            isLoadingLatestAgents={isLoadingLatestAgents}
-            onSelectThread={(workspaceId, threadId) => {
-              exitDiffView();
-              selectWorkspace(workspaceId);
-              setActiveThreadId(threadId, workspaceId);
-              if (isCompact) {
-                setActiveTab("codex");
-              }
-            }}
-          />
-        )}
-        {activeWorkspace && !showHome && (
-          <>
-            <div className="main-topbar tablet-topbar" data-tauri-drag-region>
-              <div className="main-topbar-left">
-                <MainHeader
-                  workspace={activeWorkspace}
-                  parentName={activeParentWorkspace?.name ?? null}
-                  worktreeLabel={worktreeLabel}
-                  disableBranchMenu={isWorktreeWorkspace}
-                  parentPath={activeParentWorkspace?.path ?? null}
-                  worktreePath={
-                    isWorktreeWorkspace ? activeWorkspace.path : null
-                  }
-                  branchName={gitStatus.branchName || "unknown"}
-                  branches={branches}
-                  onCheckoutBranch={handleCheckoutBranch}
-                  onCreateBranch={handleCreateBranch}
-                />
-              </div>
-              <div className="actions" />
-            </div>
-            {tabletTab === "codex" && (
-              <>
-                <div className="content tablet-content">{messagesNode}</div>
-                {composerNode}
-              </>
-            )}
-            {tabletTab === "git" && (
-              <div className="tablet-git">
-                <GitDiffPanel
-                  mode={gitPanelMode}
-                  onModeChange={setGitPanelMode}
-                  branchName={gitStatus.branchName || "unknown"}
-                  totalAdditions={gitStatus.totalAdditions}
-                  totalDeletions={gitStatus.totalDeletions}
-                  fileStatus={fileStatus}
-                  error={gitStatus.error}
-                  logError={gitLogError}
-                  logLoading={gitLogLoading}
-                  files={gitStatus.files}
-                  selectedPath={selectedDiffPath}
-                  onSelectFile={handleSelectDiff}
-                  logEntries={gitLogEntries}
-                  logTotal={gitLogTotal}
-                  logAhead={gitLogAhead}
-                  logBehind={gitLogBehind}
-                  logAheadEntries={gitLogAheadEntries}
-                  logBehindEntries={gitLogBehindEntries}
-                  logUpstream={gitLogUpstream}
-                  issues={gitIssues}
-                  issuesTotal={gitIssuesTotal}
-                  issuesLoading={gitIssuesLoading}
-                  issuesError={gitIssuesError}
-                  gitRemoteUrl={gitRemoteUrl}
-                />
-                <div className="tablet-git-viewer">
-                  <GitDiffViewer
-                    diffs={gitDiffs}
-                    selectedPath={selectedDiffPath}
-                    isLoading={isDiffLoading}
-                    error={diffError}
-                    onLineReference={handleDiffLineReference}
-                    onActivePathChange={handleActiveDiffPath}
-                  />
-                </div>
-              </div>
-            )}
-            {tabletTab === "log" && (
-              <DebugPanel
-                entries={debugEntries}
-                isOpen
-                onClear={clearDebugEntries}
-                onCopy={handleCopyDebug}
-                variant="full"
-              />
-            )}
-          </>
-        )}
-      </section>
-    </>
-  );
-
-  const phoneLayout = (
-    <div className="compact-shell">
-      <ApprovalToasts
-        approvals={approvals}
-        workspaces={workspaces}
-        onDecision={handleApprovalDecision}
-      />
-      <UpdateToast
-        state={updater.state}
-        onUpdate={updater.startUpdate}
-        onDismiss={updater.dismiss}
-      />
-      {activeTab === "projects" && (
-        <div className="compact-panel">{sidebarNode}</div>
-      )}
-      {activeTab === "codex" && (
-        <div className="compact-panel">
-          {activeWorkspace ? (
-            <>
-              <div
-                className="main-topbar compact-topbar"
-                data-tauri-drag-region
-              >
-                <div className="main-topbar-left">
-                  <MainHeader
-                    workspace={activeWorkspace}
-                    parentName={activeParentWorkspace?.name ?? null}
-                    worktreeLabel={worktreeLabel}
-                    disableBranchMenu={isWorktreeWorkspace}
-                    parentPath={activeParentWorkspace?.path ?? null}
-                    worktreePath={
-                      isWorktreeWorkspace ? activeWorkspace.path : null
-                    }
-                    branchName={gitStatus.branchName || "unknown"}
-                    branches={branches}
-                    onCheckoutBranch={handleCheckoutBranch}
-                    onCreateBranch={handleCreateBranch}
-                  />
-                </div>
-                <div className="actions" />
-              </div>
-              <div className="content compact-content">{messagesNode}</div>
-              {composerNode}
-            </>
-          ) : (
-            <div className="compact-empty">
-              <h3>No workspace selected</h3>
-              <p>Choose a project to start chatting.</p>
-              <button
-                className="ghost"
-                onClick={() => setActiveTab("projects")}
-              >
-                Go to Projects
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {activeTab === "git" && (
-        <div className="compact-panel">
-          {!activeWorkspace && (
-            <div className="compact-empty">
-              <h3>No workspace selected</h3>
-              <p>Select a project to inspect diffs.</p>
-              <button
-                className="ghost"
-                onClick={() => setActiveTab("projects")}
-              >
-                Go to Projects
-              </button>
-            </div>
-          )}
-          {activeWorkspace && showGitDetail && (
-            <>
-              <div className="compact-git-back">
-                <button
-                  onClick={() => {
-                    setSelectedDiffPath(null);
-                    setCenterMode("chat");
-                  }}
-                >
-                  ‹ Back
-                </button>
-                <span className="workspace-title">Diff</span>
-              </div>
-              <div className="compact-git-viewer">
-                <GitDiffViewer
-                  diffs={gitDiffs}
-                  selectedPath={selectedDiffPath}
-                  isLoading={isDiffLoading}
-                  error={diffError}
-                  onLineReference={handleDiffLineReference}
-                  onActivePathChange={handleActiveDiffPath}
-                />
-              </div>
-            </>
-          )}
-          {activeWorkspace && !showGitDetail && (
-            <>
-              <div
-                className="main-topbar compact-topbar"
-                data-tauri-drag-region
-              >
-                <div className="main-topbar-left">
-                  <MainHeader
-                    workspace={activeWorkspace}
-                    parentName={activeParentWorkspace?.name ?? null}
-                    worktreeLabel={worktreeLabel}
-                    disableBranchMenu={isWorktreeWorkspace}
-                    parentPath={activeParentWorkspace?.path ?? null}
-                    worktreePath={
-                      isWorktreeWorkspace ? activeWorkspace.path : null
-                    }
-                    branchName={gitStatus.branchName || "unknown"}
-                    branches={branches}
-                    onCheckoutBranch={handleCheckoutBranch}
-                    onCreateBranch={handleCreateBranch}
-                  />
-                </div>
-              </div>
-              <div className="compact-git">
-                <div className="compact-git-list">
-                  <GitDiffPanel
-                    mode={gitPanelMode}
-                    onModeChange={setGitPanelMode}
-                    branchName={gitStatus.branchName || "unknown"}
-                    totalAdditions={gitStatus.totalAdditions}
-                    totalDeletions={gitStatus.totalDeletions}
-                    fileStatus={fileStatus}
-                    error={gitStatus.error}
-                    logError={gitLogError}
-                    logLoading={gitLogLoading}
-                    files={gitStatus.files}
-                    selectedPath={selectedDiffPath}
-                    onSelectFile={handleSelectDiff}
-                    logEntries={gitLogEntries}
-                    logTotal={gitLogTotal}
-                    logAhead={gitLogAhead}
-                    logBehind={gitLogBehind}
-                    logAheadEntries={gitLogAheadEntries}
-                    logBehindEntries={gitLogBehindEntries}
-                    logUpstream={gitLogUpstream}
-                    issues={gitIssues}
-                    issuesTotal={gitIssuesTotal}
-                    issuesLoading={gitIssuesLoading}
-                    issuesError={gitIssuesError}
-                    gitRemoteUrl={gitRemoteUrl}
-                  />
-                </div>
-                {!isPhone && (
-                  <div className="compact-git-viewer">
-                    <GitDiffViewer
-                      diffs={gitDiffs}
-                      selectedPath={selectedDiffPath}
-                      isLoading={isDiffLoading}
-                      error={diffError}
-                      onLineReference={handleDiffLineReference}
-                      onActivePathChange={handleActiveDiffPath}
-                    />
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-      {activeTab === "log" && (
-        <div className="compact-panel">
-          <DebugPanel
-            entries={debugEntries}
-            isOpen
-            onClear={clearDebugEntries}
-            onCopy={handleCopyDebug}
-            variant="full"
-          />
-        </div>
-      )}
-      <TabBar activeTab={activeTab} onSelect={setActiveTab} />
-    </div>
-  );
+        const { [threadId]: _, ...rest } = prev;
+        return rest;
+      });
+      removeImagesForThread(threadId);
+    },
+    onDeleteWorkspace: (workspaceId) => {
+      void removeWorkspace(workspaceId);
+    },
+    onDeleteWorktree: (workspaceId) => {
+      void removeWorktree(workspaceId);
+    },
+    updaterState: updater.state,
+    onUpdate: updater.startUpdate,
+    onDismissUpdate: updater.dismiss,
+    latestAgentRuns,
+    isLoadingLatestAgents,
+    onSelectHomeThread: (workspaceId, threadId) => {
+      exitDiffView();
+      selectWorkspace(workspaceId);
+      setActiveThreadId(threadId, workspaceId);
+      if (isCompact) {
+        setActiveTab("codex");
+      }
+    },
+    activeWorkspace,
+    activeParentWorkspace,
+    worktreeLabel,
+    isWorktreeWorkspace,
+    branchName: gitStatus.branchName || "unknown",
+    branches,
+    onCheckoutBranch: handleCheckoutBranch,
+    onCreateBranch: handleCreateBranch,
+    centerMode,
+    onExitDiff: () => {
+      setCenterMode("chat");
+      setSelectedDiffPath(null);
+    },
+    activeTab,
+    onSelectTab: setActiveTab,
+    tabletNavTab: tabletTab,
+    gitPanelMode,
+    onGitPanelModeChange: setGitPanelMode,
+    gitStatus,
+    fileStatus,
+    selectedDiffPath,
+    onSelectDiff: handleSelectDiff,
+    gitLogEntries,
+    gitLogTotal,
+    gitLogAhead,
+    gitLogBehind,
+    gitLogAheadEntries,
+    gitLogBehindEntries,
+    gitLogUpstream,
+    gitLogError,
+    gitLogLoading,
+    gitIssues,
+    gitIssuesTotal,
+    gitIssuesLoading,
+    gitIssuesError,
+    gitRemoteUrl,
+    gitDiffs,
+    gitDiffLoading: isDiffLoading,
+    gitDiffError: diffError,
+    onDiffLineReference: handleDiffLineReference,
+    onDiffActivePathChange: handleActiveDiffPath,
+    onSend: handleSend,
+    onStop: interruptTurn,
+    canStop: canInterrupt,
+    isReviewing,
+    isProcessing,
+    activeTokenUsage,
+    activeQueue,
+    draftText: activeDraft,
+    onDraftChange: handleDraftChange,
+    activeImages,
+    onPickImages: pickImages,
+    onAttachImages: attachImages,
+    onRemoveImage: removeImage,
+    prefillDraft,
+    onPrefillHandled: (id) => {
+      if (prefillDraft?.id === id) {
+        setPrefillDraft(null);
+      }
+    },
+    insertText: composerInsert,
+    onInsertHandled: (id) => {
+      if (composerInsert?.id === id) {
+        setComposerInsert(null);
+      }
+    },
+    onEditQueued: (item) => {
+      if (!activeThreadId) {
+        return;
+      }
+      removeQueuedMessage(activeThreadId, item.id);
+      setImagesForThread(activeThreadId, item.images ?? []);
+      setPrefillDraft(item);
+    },
+    onDeleteQueued: (id) => {
+      if (!activeThreadId) {
+        return;
+      }
+      removeQueuedMessage(activeThreadId, id);
+    },
+    models,
+    selectedModelId,
+    onSelectModel: setSelectedModelId,
+    reasoningOptions,
+    selectedEffort,
+    onSelectEffort: setSelectedEffort,
+    accessMode,
+    onSelectAccessMode: setAccessMode,
+    skills,
+    prompts,
+    files,
+    textareaRef: composerInputRef,
+    showComposer,
+    plan: activePlan,
+    debugEntries,
+    debugOpen,
+    onClearDebug: clearDebugEntries,
+    onCopyDebug: handleCopyDebug,
+    onResizeDebug: onDebugPanelResizeStart,
+    onBackFromDiff: () => {
+      setSelectedDiffPath(null);
+      setCenterMode("chat");
+    },
+    onGoProjects: () => setActiveTab("projects"),
+  });
 
   return (
     <div
@@ -1418,20 +799,74 @@ function MainApp() {
       }
     >
       <div className="drag-strip" id="titlebar" data-tauri-drag-region />
-      {isPhone ? phoneLayout : isTablet ? tabletLayout : desktopLayout}
+      {isPhone ? (
+        <PhoneLayout
+          approvalToastsNode={approvalToastsNode}
+          updateToastNode={updateToastNode}
+          tabBarNode={tabBarNode}
+          sidebarNode={sidebarNode}
+          activeTab={activeTab}
+          activeWorkspace={Boolean(activeWorkspace)}
+          showGitDetail={showGitDetail}
+          compactEmptyCodexNode={compactEmptyCodexNode}
+          compactEmptyGitNode={compactEmptyGitNode}
+          compactGitBackNode={compactGitBackNode}
+          topbarLeftNode={mainHeaderNode}
+          messagesNode={messagesNode}
+          composerNode={composerNode}
+          gitDiffPanelNode={gitDiffPanelNode}
+          gitDiffViewerNode={gitDiffViewerNode}
+          debugPanelNode={debugPanelFullNode}
+        />
+      ) : isTablet ? (
+        <TabletLayout
+          tabletNavNode={tabletNavNode}
+          approvalToastsNode={approvalToastsNode}
+          updateToastNode={updateToastNode}
+          homeNode={homeNode}
+          showHome={showHome}
+          showWorkspace={Boolean(activeWorkspace && !showHome)}
+          sidebarNode={sidebarNode}
+          tabletTab={tabletTab}
+          onSidebarResizeStart={onSidebarResizeStart}
+          topbarLeftNode={mainHeaderNode}
+          messagesNode={messagesNode}
+          composerNode={composerNode}
+          gitDiffPanelNode={gitDiffPanelNode}
+          gitDiffViewerNode={gitDiffViewerNode}
+          debugPanelNode={debugPanelFullNode}
+        />
+      ) : (
+        <DesktopLayout
+          sidebarNode={sidebarNode}
+          updateToastNode={updateToastNode}
+          approvalToastsNode={approvalToastsNode}
+          homeNode={homeNode}
+          showHome={showHome}
+          showWorkspace={Boolean(activeWorkspace && !showHome)}
+          topbarLeftNode={desktopTopbarLeftNode}
+          centerMode={centerMode}
+          messagesNode={messagesNode}
+          gitDiffViewerNode={gitDiffViewerNode}
+          gitDiffPanelNode={gitDiffPanelNode}
+          planPanelNode={planPanelNode}
+          composerNode={composerNode}
+          debugPanelNode={debugPanelNode}
+          hasActivePlan={hasActivePlan}
+          onSidebarResizeStart={onSidebarResizeStart}
+          onRightPanelResizeStart={onRightPanelResizeStart}
+          onPlanPanelResizeStart={onPlanPanelResizeStart}
+        />
+      )}
       {worktreePrompt && (
         <WorktreePrompt
           workspaceName={worktreePrompt.workspace.name}
           branch={worktreePrompt.branch}
           error={worktreePrompt.error}
           isBusy={worktreePrompt.isSubmitting}
-          onChange={(value) =>
-            setWorktreePrompt((prev) =>
-              prev ? { ...prev, branch: value, error: null } : prev
-            )
-          }
-          onCancel={() => setWorktreePrompt(null)}
-          onConfirm={handleConfirmWorktreePrompt}
+          onChange={updateWorktreeBranch}
+          onCancel={cancelWorktreePrompt}
+          onConfirm={confirmWorktreePrompt}
         />
       )}
       {settingsOpen && (
