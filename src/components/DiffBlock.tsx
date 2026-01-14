@@ -35,11 +35,12 @@ export function DiffBlock({
           line.type === "add" || line.type === "del" || line.type === "context";
         const html = highlightLine(line.text, shouldHighlight ? language : null);
         const isSelectable = Boolean(onLineSelect) && shouldHighlight;
-        const isSelected =
+        const isSelected = Boolean(
           isSelectable &&
-          selectedRange &&
-          index >= selectedRange.start &&
-          index <= selectedRange.end;
+            selectedRange &&
+            index >= selectedRange.start &&
+            index <= selectedRange.end,
+        );
         const isRangeStart = isSelected && selectedRange?.start === index;
         const isRangeEnd = isSelected && selectedRange?.end === index;
         return (

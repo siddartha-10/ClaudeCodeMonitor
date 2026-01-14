@@ -26,6 +26,14 @@ type SelectedRange = {
   anchor: number;
 };
 
+type SelectableDiffLine = ParsedDiffLine & {
+  type: "add" | "del" | "context";
+};
+
+function isSelectableLine(line: ParsedDiffLine): line is SelectableDiffLine {
+  return line.type === "add" || line.type === "del" || line.type === "context";
+}
+
 export function GitDiffViewer({
   diffs,
   selectedPath,
@@ -68,7 +76,7 @@ export function GitDiffViewer({
     index: number,
     isRangeSelect: boolean,
   ) => {
-    if (line.type !== "add" && line.type !== "del" && line.type !== "context") {
+    if (!isSelectableLine(line)) {
       return;
     }
     const hasAnchor = selectedRange?.path === entry.path;
@@ -79,7 +87,7 @@ export function GitDiffViewer({
 
     const selectedLines = parsedLines
       .slice(start, end + 1)
-      .filter((item) => item.type === "add" || item.type === "del" || item.type === "context");
+      .filter(isSelectableLine);
     if (selectedLines.length === 0) {
       return;
     }
