@@ -230,9 +230,6 @@ export function GitDiffViewer({
   const prUpdatedLabel = pullRequest?.updatedAt
     ? formatRelativeTime(new Date(pullRequest.updatedAt).getTime())
     : null;
-  const prCreatedLabel = pullRequest?.createdAt
-    ? formatRelativeTime(new Date(pullRequest.createdAt).getTime())
-    : null;
   const prAuthor = pullRequest?.author?.login ?? "unknown";
   const prBody = pullRequest?.body?.trim() ?? "";
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
