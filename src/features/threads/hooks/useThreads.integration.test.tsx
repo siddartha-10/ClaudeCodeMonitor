@@ -136,8 +136,10 @@ describe("useThreads UX integration", () => {
       expect(vi.mocked(resumeThread)).toHaveBeenCalledWith("ws-1", "thread-2");
     });
 
-    expect(result.current.threadStatusById["thread-2"]?.hasUnread).toBe(false);
-    expect(result.current.threadStatusById["thread-2"]?.isReviewing).toBe(true);
+    await waitFor(() => {
+      expect(result.current.threadStatusById["thread-2"]?.hasUnread).toBe(false);
+      expect(result.current.threadStatusById["thread-2"]?.isReviewing).toBe(true);
+    });
     expect(result.current.planByThread["thread-2"]).toEqual({
       turnId: "turn-2",
       explanation: "Plan note",
