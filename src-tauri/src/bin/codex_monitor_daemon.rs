@@ -1167,6 +1167,7 @@ async fn run_claude_turn(
     let mut last_text = String::new();
     let mut last_usage: Option<Value> = None;
     let mut tool_names: HashMap<String, String> = HashMap::new();
+    let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_counter: usize = 0;
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
@@ -1198,8 +1199,10 @@ async fn run_claude_turn(
                             .and_then(|v| v.as_str())
                             .unwrap_or("Tool")
                             .to_string();
+                        let tool_input = entry.get("input").cloned().unwrap_or(Value::Null);
                         if !tool_id.is_empty() {
                             tool_names.insert(tool_id.to_string(), tool_name.clone());
+                            tool_inputs.insert(tool_id.to_string(), tool_input.clone());
                         }
                         let item_id = if tool_id.is_empty() {
                             tool_counter += 1;
@@ -1218,6 +1221,7 @@ async fn run_claude_turn(
                                     "type": "commandExecution",
                                     "command": [tool_name],
                                     "status": "running",
+                                    "toolInput": tool_input,
                                 }
                             }),
                         );
@@ -1278,6 +1282,10 @@ async fn run_claude_turn(
                             .get(tool_use_id)
                             .cloned()
                             .unwrap_or_else(|| "Tool".to_string());
+                        let tool_input = tool_inputs
+                            .get(tool_use_id)
+                            .cloned()
+                            .unwrap_or(Value::Null);
                         let item_id = if tool_use_id.is_empty() {
                             tool_counter += 1;
                             format!("{turn_id}-tool-result-{tool_counter}")
@@ -1296,6 +1304,7 @@ async fn run_claude_turn(
                                     "command": [command],
                                     "status": "completed",
                                     "aggregatedOutput": output,
+                                    "toolInput": tool_input,
                                 }
                             }),
                         );
@@ -1399,6 +1408,7 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
     let reader = StdBufReader::new(file);
     let mut items: Vec<Value> = Vec::new();
     let mut tool_names: HashMap<String, String> = HashMap::new();
+    let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_item_indices: HashMap<String, usize> = HashMap::new();
     let mut preview: Option<String> = None;
     let mut created_at: Option<i64> = None;
@@ -1472,6 +1482,10 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                     .get(tool_use_id)
                     .cloned()
                     .unwrap_or_else(|| "Tool".to_string());
+                let tool_input = tool_inputs
+                    .get(tool_use_id)
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 let id = if tool_use_id.is_empty() {
                     format!("{thread_id}-tool-result-{}", items.len())
                 } else {
@@ -1484,6 +1498,7 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                     "command": [command],
                     "status": "completed",
                     "aggregatedOutput": output,
+                    "toolInput": tool_input,
                 });
                 if let Some(index) = tool_item_indices.get(&item_id) {
                     items[*index] = item;
@@ -1494,11 +1509,33 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
             }
         } else if event_type == "assistant" {
             let mut text = String::new();
+            let mut thinking_index = 0;
             for entry in content.iter() {
                 match entry.get("type").and_then(|v| v.as_str()) {
                     Some("text") => {
                         if let Some(piece) = entry.get("text").and_then(|v| v.as_str()) {
                             text.push_str(piece);
+                        }
+                    }
+                    Some("thinking") => {
+                        if let Some(thinking) =
+                            entry.get("thinking").and_then(|v| v.as_str())
+                        {
+                            let trimmed = thinking.trim();
+                            if !trimmed.is_empty() {
+                                let message_id = value
+                                    .get("uuid")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(thread_id);
+                                let id = format!("{message_id}-thinking-{thinking_index}");
+                                thinking_index += 1;
+                                items.push(json!({
+                                    "id": id,
+                                    "type": "reasoning",
+                                    "summary": "",
+                                    "content": trimmed,
+                                }));
+                            }
                         }
                     }
                     Some("tool_use") => {
@@ -1511,8 +1548,10 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                             .and_then(|v| v.as_str())
                             .unwrap_or("Tool")
                             .to_string();
+                        let tool_input = entry.get("input").cloned().unwrap_or(Value::Null);
                         if !tool_id.is_empty() {
                             tool_names.insert(tool_id.to_string(), tool_name.clone());
+                            tool_inputs.insert(tool_id.to_string(), tool_input.clone());
                         }
                         let id = if tool_id.is_empty() {
                             format!("{thread_id}-tool-{}", items.len())
@@ -1525,6 +1564,7 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                             "type": "commandExecution",
                             "command": [tool_name],
                             "status": "running",
+                            "toolInput": tool_input,
                         });
                         if let Some(index) = tool_item_indices.get(&item_id) {
                             items[*index] = item;

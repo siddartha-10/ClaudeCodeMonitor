@@ -128,6 +128,21 @@ function firstStringField(
   return "";
 }
 
+function normalizeToolInput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function buildPathSummary(path: string) {
+  const file = basename(path);
+  return {
+    value: file,
+    detail: path && path !== file ? path : "",
+  };
+}
+
 function toolNameFromTitle(title: string) {
   if (!title.toLowerCase().startsWith("tool:")) {
     return "";
@@ -188,6 +203,121 @@ function buildToolSummary(
   commandText: string,
 ): ToolSummary {
   if (item.toolType === "commandExecution") {
+    const toolInput = normalizeToolInput(item.toolInput);
+    const toolName = commandText.split(/\s+/)[0]?.trim().toLowerCase();
+    if (toolInput && toolName) {
+      if (toolName === "read") {
+        const targetPath = firstStringField(toolInput, [
+          "file_path",
+          "path",
+          "filePath",
+          "filename",
+          "file",
+        ]);
+        const pathSummary = buildPathSummary(targetPath);
+        return {
+          label: "read",
+          value: pathSummary.value || "file",
+          detail: pathSummary.detail,
+        };
+      }
+      if (toolName === "write") {
+        const targetPath = firstStringField(toolInput, [
+          "file_path",
+          "path",
+          "filePath",
+          "filename",
+          "file",
+        ]);
+        const pathSummary = buildPathSummary(targetPath);
+        return {
+          label: "write",
+          value: pathSummary.value || "file",
+          detail: pathSummary.detail,
+        };
+      }
+      if (toolName === "edit") {
+        const targetPath = firstStringField(toolInput, [
+          "file_path",
+          "path",
+          "filePath",
+          "filename",
+          "file",
+        ]);
+        const pathSummary = buildPathSummary(targetPath);
+        const replaceAll = Boolean(toolInput.replace_all ?? toolInput.replaceAll);
+        const detailParts = [pathSummary.detail, replaceAll ? "replace all" : ""]
+          .filter(Boolean)
+          .join(" • ");
+        return {
+          label: "edit",
+          value: pathSummary.value || "file",
+          detail: detailParts,
+        };
+      }
+      if (toolName === "grep") {
+        const pattern = firstStringField(toolInput, ["pattern", "text", "query"]);
+        const path = firstStringField(toolInput, ["path", "glob"]);
+        return {
+          label: "searched",
+          value: pattern || "pattern",
+          detail: path,
+        };
+      }
+      if (toolName === "glob") {
+        const pattern = firstStringField(toolInput, ["pattern", "glob"]);
+        const path = firstStringField(toolInput, ["path"]);
+        return {
+          label: "glob",
+          value: pattern || "pattern",
+          detail: path,
+        };
+      }
+      if (toolName === "websearch") {
+        const query = firstStringField(toolInput, ["query", "text"]);
+        return {
+          label: "searched",
+          value: query || "query",
+        };
+      }
+      if (toolName === "webfetch") {
+        const url = firstStringField(toolInput, ["url"]);
+        const prompt = firstStringField(toolInput, ["prompt"]);
+        return {
+          label: "fetched",
+          value: url || prompt || "request",
+          detail: url && prompt ? prompt : "",
+        };
+      }
+      if (toolName === "bash") {
+        const description = firstStringField(toolInput, ["description"]);
+        const command = cleanCommandText(
+          firstStringField(toolInput, ["command"]),
+        );
+        return {
+          label: "command",
+          value: description || command || "Command",
+          detail: description && command && description !== command ? command : "",
+        };
+      }
+      if (toolName === "task") {
+        const description = firstStringField(toolInput, ["description", "prompt"]);
+        const subagent = firstStringField(toolInput, ["subagent_type", "subagentType"]);
+        return {
+          label: "task",
+          value: description || "task",
+          detail: subagent,
+        };
+      }
+      if (toolName === "todowrite") {
+        const todos = toolInput.todos;
+        const count = Array.isArray(todos) ? todos.length : 0;
+        return {
+          label: "todos",
+          value: count > 0 ? `${count} items` : "todos",
+        };
+      }
+    }
     const cleanedCommand = cleanCommandText(commandText);
     return {
       label: "command",
@@ -573,7 +703,9 @@ const ToolRow = memo(function ToolRow({
       ? "files edited"
       : "file edited"
     : isCommand
-      ? ""
+      ? summary.label === "command"
+        ? ""
+        : summary.label
       : summary.label;
   const summaryValue = isFileChange
     ? changeNames.length > 1

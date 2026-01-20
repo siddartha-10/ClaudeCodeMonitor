@@ -52,6 +52,7 @@ export type ConversationItem =
       toolType: string;
       title: string;
       detail: string;
+      toolInput?: Record<string, unknown> | null;
       status?: string;
       output?: string;
       changes?: { path: string; kind?: string; diff?: string }[];

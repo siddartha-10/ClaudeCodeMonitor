@@ -25,6 +25,13 @@ function normalizeStringList(value: unknown) {
   return single ? [single] : [];
 }
 
+function asRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
 function formatCollabAgentStates(value: unknown) {
   if (!value || typeof value !== "object") {
     return "";
@@ -158,12 +165,14 @@ export function buildConversationItem(
     const command = Array.isArray(item.command)
       ? item.command.map((part) => asString(part)).join(" ")
       : asString(item.command ?? "");
+    const toolInput = asRecord(item.toolInput ?? item.tool_input ?? null);
     return {
       id,
       kind: "tool",
       toolType: type,
       title: command ? `Command: ${command}` : "Command",
       detail: asString(item.cwd ?? ""),
+      toolInput,
       status: asString(item.status ?? ""),
       output: asString(item.aggregatedOutput ?? ""),
     };
