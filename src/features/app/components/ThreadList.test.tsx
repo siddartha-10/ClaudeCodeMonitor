@@ -118,6 +118,9 @@ describe("ThreadList", () => {
       />,
     );
 
+    const expandButton = screen.getByRole("button", { name: "Expand thread" });
+    fireEvent.click(expandButton);
+
     const nestedRow = screen.getByText("Nested Agent").closest(".thread-row");
     expect(nestedRow).toBeTruthy();
     if (!nestedRow) {

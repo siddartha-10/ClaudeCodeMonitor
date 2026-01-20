@@ -220,7 +220,7 @@ function MainApp() {
     | "display"
     | "dictation"
     | "shortcuts"
-    | "codex"
+    | "claude"
     | "experimental";
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(
@@ -347,7 +347,7 @@ function MainApp() {
     connectWorkspace,
     markWorkspaceConnected,
     updateWorkspaceSettings,
-    updateWorkspaceCodexBin,
+    updateWorkspaceClaudeBin,
     createWorkspaceGroup,
     renameWorkspaceGroup,
     moveWorkspaceGroup,
@@ -361,7 +361,7 @@ function MainApp() {
     refreshWorkspaces
   } = useWorkspaces({
     onDebug: addDebugEntry,
-    defaultCodexBin: appSettings.codexBin,
+    defaultClaudeBin: appSettings.claudeBin,
     appSettings,
     onUpdateAppSettings: queueSaveSettings,
   });
@@ -2220,8 +2220,8 @@ function MainApp() {
             await queueSaveSettings(next);
           }}
           onRunDoctor={doctor}
-          onUpdateWorkspaceCodexBin={async (id, codexBin) => {
-            await updateWorkspaceCodexBin(id, codexBin);
+          onUpdateWorkspaceClaudeBin={async (id, claudeBin) => {
+            await updateWorkspaceClaudeBin(id, claudeBin);
           }}
           scaleShortcutTitle={scaleShortcutTitle}
           scaleShortcutText={scaleShortcutText}

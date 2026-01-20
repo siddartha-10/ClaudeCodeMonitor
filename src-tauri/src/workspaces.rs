@@ -9,8 +9,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use uuid::Uuid;
 
-use crate::codex::spawn_workspace_session;
-use crate::codex_home::resolve_workspace_codex_home;
+use crate::claude::spawn_workspace_session;
+use crate::backend::events::{AppServerEvent, EventSink};
+use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
 use crate::state::AppState;
 use crate::git_utils::resolve_git_root;
@@ -399,7 +400,7 @@ pub(crate) async fn list_workspaces(
             id: entry.id.clone(),
             name: entry.name.clone(),
             path: entry.path.clone(),
-            codex_bin: entry.codex_bin.clone(),
+            claude_bin: entry.claude_bin.clone(),
             connected: sessions.contains_key(&entry.id),
             kind: entry.kind.clone(),
             parent_id: entry.parent_id.clone(),
@@ -414,7 +415,7 @@ pub(crate) async fn list_workspaces(
 #[tauri::command]
 pub(crate) async fn add_workspace(
     path: String,
-    codex_bin: Option<String>,
+    claude_bin: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<WorkspaceInfo, String> {
@@ -423,7 +424,7 @@ pub(crate) async fn add_workspace(
             &*state,
             app,
             "add_workspace",
-            json!({ "path": path, "codex_bin": codex_bin }),
+            json!({ "path": path, "claude_bin": claude_bin }),
         )
         .await?;
         return serde_json::from_value(response).map_err(|err| err.to_string());
@@ -438,7 +439,7 @@ pub(crate) async fn add_workspace(
         id: Uuid::new_v4().to_string(),
         name: name.clone(),
         path: path.clone(),
-        codex_bin,
+        claude_bin,
         kind: WorkspaceKind::Main,
         parent_id: None,
         worktree: None,
@@ -447,10 +448,9 @@ pub(crate) async fn add_workspace(
 
     let default_bin = {
         let settings = state.app_settings.lock().await;
-        settings.codex_bin.clone()
+        settings.claude_bin.clone()
     };
-    let codex_home = resolve_workspace_codex_home(&entry, None);
-    let session = spawn_workspace_session(entry.clone(), default_bin, app, codex_home).await?;
+    let session = spawn_workspace_session(entry.clone(), default_bin).await?;
 
     if let Err(error) = {
         let mut workspaces = state.workspaces.lock().await;
@@ -462,8 +462,6 @@ pub(crate) async fn add_workspace(
             let mut workspaces = state.workspaces.lock().await;
             workspaces.remove(&entry.id);
         }
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
         return Err(error);
     }
 
@@ -477,7 +475,7 @@ pub(crate) async fn add_workspace(
         id: entry.id,
         name: entry.name,
         path: entry.path,
-        codex_bin: entry.codex_bin,
+        claude_bin: entry.claude_bin,
         connected: true,
         kind: entry.kind,
         parent_id: entry.parent_id,
@@ -492,7 +490,7 @@ pub(crate) async fn add_clone(
     copy_name: String,
     copies_folder: String,
     state: State<'_, AppState>,
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<WorkspaceInfo, String> {
     let copy_name = copy_name.trim().to_string();
     if copy_name.is_empty() {
@@ -553,7 +551,7 @@ pub(crate) async fn add_clone(
         id: Uuid::new_v4().to_string(),
         name: copy_name.clone(),
         path: destination_path_string,
-        codex_bin: source_entry.codex_bin.clone(),
+        claude_bin: source_entry.claude_bin.clone(),
         kind: WorkspaceKind::Main,
         parent_id: None,
         worktree: None,
@@ -565,10 +563,9 @@ pub(crate) async fn add_clone(
 
     let default_bin = {
         let settings = state.app_settings.lock().await;
-        settings.codex_bin.clone()
+        settings.claude_bin.clone()
     };
-    let codex_home = resolve_workspace_codex_home(&entry, None);
-    let session = match spawn_workspace_session(entry.clone(), default_bin, app, codex_home).await {
+    let session = match spawn_workspace_session(entry.clone(), default_bin).await {
         Ok(session) => session,
         Err(error) => {
             let _ = tokio::fs::remove_dir_all(&destination_path).await;
@@ -586,8 +583,6 @@ pub(crate) async fn add_clone(
             let mut workspaces = state.workspaces.lock().await;
             workspaces.remove(&entry.id);
         }
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
         let _ = tokio::fs::remove_dir_all(&destination_path).await;
         return Err(error);
     }
@@ -602,7 +597,7 @@ pub(crate) async fn add_clone(
         id: entry.id,
         name: entry.name,
         path: entry.path,
-        codex_bin: entry.codex_bin,
+        claude_bin: entry.claude_bin,
         connected: true,
         kind: entry.kind,
         parent_id: entry.parent_id,
@@ -667,7 +662,7 @@ pub(crate) async fn add_worktree(
         id: Uuid::new_v4().to_string(),
         name: branch.to_string(),
         path: worktree_path_string,
-        codex_bin: parent_entry.codex_bin.clone(),
+        claude_bin: parent_entry.claude_bin.clone(),
         kind: WorkspaceKind::Worktree,
         parent_id: Some(parent_entry.id.clone()),
         worktree: Some(WorktreeInfo {
@@ -678,10 +673,9 @@ pub(crate) async fn add_worktree(
 
     let default_bin = {
         let settings = state.app_settings.lock().await;
-        settings.codex_bin.clone()
+        settings.claude_bin.clone()
     };
-    let codex_home = resolve_workspace_codex_home(&entry, Some(&parent_entry.path));
-    let session = spawn_workspace_session(entry.clone(), default_bin, app, codex_home).await?;
+    let session = spawn_workspace_session(entry.clone(), default_bin).await?;
     {
         let mut workspaces = state.workspaces.lock().await;
         workspaces.insert(entry.id.clone(), entry.clone());
@@ -698,7 +692,7 @@ pub(crate) async fn add_worktree(
         id: entry.id,
         name: entry.name,
         path: entry.path,
-        codex_bin: entry.codex_bin,
+        claude_bin: entry.claude_bin,
         connected: true,
         kind: entry.kind,
         parent_id: entry.parent_id,
@@ -731,10 +725,7 @@ pub(crate) async fn remove_workspace(
 
     let parent_path = PathBuf::from(&entry.path);
     for child in &child_worktrees {
-        if let Some(session) = state.sessions.lock().await.remove(&child.id) {
-            let mut child_process = session.child.lock().await;
-            let _ = child_process.kill().await;
-        }
+        let _ = state.sessions.lock().await.remove(&child.id);
         let child_path = PathBuf::from(&child.path);
         if child_path.exists() {
             run_git_command(
@@ -746,10 +737,7 @@ pub(crate) async fn remove_workspace(
     }
     let _ = run_git_command(&parent_path, &["worktree", "prune", "--expire", "now"]).await;
 
-    if let Some(session) = state.sessions.lock().await.remove(&id) {
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
-    }
+    let _ = state.sessions.lock().await.remove(&id);
 
     {
         let mut workspaces = state.workspaces.lock().await;
@@ -789,10 +777,7 @@ pub(crate) async fn remove_worktree(
         (entry, parent)
     };
 
-    if let Some(session) = state.sessions.lock().await.remove(&entry.id) {
-        let mut child = session.child.lock().await;
-        let _ = child.kill().await;
-    }
+    let _ = state.sessions.lock().await.remove(&entry.id);
 
     let parent_path = PathBuf::from(&parent.path);
     let entry_path = PathBuf::from(&entry.path);
@@ -937,15 +922,22 @@ pub(crate) async fn rename_worktree(
     let was_connected = state.sessions.lock().await.contains_key(&entry_snapshot.id);
     if was_connected {
         if let Some(session) = state.sessions.lock().await.remove(&entry_snapshot.id) {
-            let mut child = session.child.lock().await;
-            let _ = child.kill().await;
+            let mut active_turns = session.active_turns.lock().await;
+            let children = active_turns
+                .drain()
+                .map(|(_, active_turn)| active_turn.child)
+                .collect::<Vec<_>>();
+            drop(active_turns);
+            for child in children {
+                let mut guard = child.lock().await;
+                let _ = guard.kill().await;
+            }
         }
         let default_bin = {
             let settings = state.app_settings.lock().await;
-            settings.codex_bin.clone()
+            settings.claude_bin.clone()
         };
-        let codex_home = resolve_workspace_codex_home(&entry_snapshot, Some(&parent.path));
-        match spawn_workspace_session(entry_snapshot.clone(), default_bin, app, codex_home).await {
+        match spawn_workspace_session(entry_snapshot.clone(), default_bin).await {
             Ok(session) => {
                 state
                     .sessions
@@ -967,7 +959,7 @@ pub(crate) async fn rename_worktree(
         id: entry_snapshot.id,
         name: entry_snapshot.name,
         path: entry_snapshot.path,
-        codex_bin: entry_snapshot.codex_bin,
+        claude_bin: entry_snapshot.claude_bin,
         connected,
         kind: entry_snapshot.kind,
         parent_id: entry_snapshot.parent_id,
@@ -1224,7 +1216,7 @@ pub(crate) async fn update_workspace_settings(
         id: entry_snapshot.id,
         name: entry_snapshot.name,
         path: entry_snapshot.path,
-        codex_bin: entry_snapshot.codex_bin,
+        claude_bin: entry_snapshot.claude_bin,
         connected,
         kind: entry_snapshot.kind,
         parent_id: entry_snapshot.parent_id,
@@ -1234,16 +1226,16 @@ pub(crate) async fn update_workspace_settings(
 }
 
 #[tauri::command]
-pub(crate) async fn update_workspace_codex_bin(
+pub(crate) async fn update_workspace_claude_bin(
     id: String,
-    codex_bin: Option<String>,
+    claude_bin: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<WorkspaceInfo, String> {
     let (entry_snapshot, list) = {
         let mut workspaces = state.workspaces.lock().await;
         let entry_snapshot = match workspaces.get_mut(&id) {
             Some(entry) => {
-                entry.codex_bin = codex_bin.clone();
+                entry.claude_bin = claude_bin.clone();
                 entry.clone()
             }
             None => return Err("workspace not found".to_string()),
@@ -1258,7 +1250,7 @@ pub(crate) async fn update_workspace_codex_bin(
         id: entry_snapshot.id,
         name: entry_snapshot.name,
         path: entry_snapshot.path,
-        codex_bin: entry_snapshot.codex_bin,
+        claude_bin: entry_snapshot.claude_bin,
         connected,
         kind: entry_snapshot.kind,
         parent_id: entry_snapshot.parent_id,
@@ -1279,29 +1271,25 @@ pub(crate) async fn connect_workspace(
         return Ok(());
     }
 
-    let (entry, parent_path) = {
+    let entry = {
         let workspaces = state.workspaces.lock().await;
         workspaces
             .get(&id)
             .cloned()
-            .map(|entry| {
-                let parent_path = entry
-                    .parent_id
-                    .as_ref()
-                    .and_then(|parent_id| workspaces.get(parent_id))
-                    .map(|parent| parent.path.clone());
-                (entry, parent_path)
-            })
             .ok_or("workspace not found")?
     };
 
     let default_bin = {
         let settings = state.app_settings.lock().await;
-        settings.codex_bin.clone()
+        settings.claude_bin.clone()
     };
-    let codex_home = resolve_workspace_codex_home(&entry, parent_path.as_deref());
-    let session = spawn_workspace_session(entry.clone(), default_bin, app, codex_home).await?;
-    state.sessions.lock().await.insert(entry.id, session);
+    let session = spawn_workspace_session(entry.clone(), default_bin).await?;
+    state.sessions.lock().await.insert(entry.id.clone(), session);
+    let event_sink = TauriEventSink::new(app.clone());
+    event_sink.emit_app_server_event(AppServerEvent {
+        workspace_id: entry.id,
+        message: json!({ "method": "claude/connected", "params": {} }),
+    });
     Ok(())
 }
 
@@ -1386,7 +1374,7 @@ mod tests {
             name: name.to_string(),
             path: "/tmp".to_string(),
             connected: false,
-            codex_bin: None,
+            claude_bin: None,
             kind,
             parent_id,
             worktree,
@@ -1532,7 +1520,7 @@ mod tests {
             id: id.clone(),
             name: "Workspace".to_string(),
             path: "/tmp".to_string(),
-            codex_bin: None,
+            claude_bin: None,
             kind: WorkspaceKind::Main,
             parent_id: None,
             worktree: None,

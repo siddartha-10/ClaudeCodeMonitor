@@ -23,7 +23,7 @@ export type WorkspaceInfo = {
   name: string;
   path: string;
   connected: boolean;
-  codex_bin?: string | null;
+  claude_bin?: string | null;
   kind?: WorkspaceKind;
   parentId?: string | null;
   worktree?: WorktreeInfo | null;
@@ -74,7 +74,7 @@ export type BackendMode = "local" | "remote";
 export type ThemePreference = "system" | "light" | "dark";
 
 export type AppSettings = {
-  codexBin: string | null;
+  claudeBin: string | null;
   backendMode: BackendMode;
   remoteBackendHost: string;
   remoteBackendToken: string | null;
@@ -97,16 +97,11 @@ export type AppSettings = {
   workspaceGroups: WorkspaceGroup[];
 };
 
-export type CodexDoctorResult = {
+export type ClaudeDoctorResult = {
   ok: boolean;
-  codexBin: string | null;
+  claudeBin: string | null;
   version: string | null;
-  appServerOk: boolean;
-  details: string | null;
   path: string | null;
-  nodeOk: boolean;
-  nodeVersion: string | null;
-  nodeDetails: string | null;
 };
 
 export type ApprovalRequest = {

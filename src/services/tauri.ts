@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppSettings,
-  CodexDoctorResult,
+  ClaudeDoctorResult,
   DictationModelStatus,
   DictationSessionState,
   LocalUsageSnapshot,
@@ -51,9 +51,9 @@ export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
 
 export async function addWorkspace(
   path: string,
-  codex_bin: string | null,
+  claude_bin: string | null,
 ): Promise<WorkspaceInfo> {
-  return invoke<WorkspaceInfo>("add_workspace", { path, codex_bin });
+  return invoke<WorkspaceInfo>("add_workspace", { path, claude_bin });
 }
 
 export async function addClone(
@@ -82,11 +82,11 @@ export async function updateWorkspaceSettings(
   return invoke<WorkspaceInfo>("update_workspace_settings", { id, settings });
 }
 
-export async function updateWorkspaceCodexBin(
+export async function updateWorkspaceClaudeBin(
   id: string,
-  codex_bin: string | null,
+  claude_bin: string | null,
 ): Promise<WorkspaceInfo> {
-  return invoke<WorkspaceInfo>("update_workspace_codex_bin", { id, codex_bin });
+  return invoke<WorkspaceInfo>("update_workspace_claude_bin", { id, claude_bin });
 }
 
 export async function removeWorkspace(id: string): Promise<void> {
@@ -407,10 +407,10 @@ export async function updateAppSettings(settings: AppSettings): Promise<AppSetti
   return invoke<AppSettings>("update_app_settings", { settings });
 }
 
-export async function runCodexDoctor(
-  codexBin: string | null,
-): Promise<CodexDoctorResult> {
-  return invoke<CodexDoctorResult>("codex_doctor", { codexBin });
+export async function runClaudeDoctor(
+  claudeBin: string | null,
+): Promise<ClaudeDoctorResult> {
+  return invoke<ClaudeDoctorResult>("claude_doctor", { claudeBin });
 }
 
 export async function getWorkspaceFiles(workspaceId: string) {

@@ -38,7 +38,7 @@ export function useWorktreePrompt({
     useState<WorktreePromptState>(null);
 
   const openPrompt = useCallback((workspace: WorkspaceInfo) => {
-    const defaultBranch = `codex/${new Date().toISOString().slice(0, 10)}-${Math.random()
+    const defaultBranch = `claude/${new Date().toISOString().slice(0, 10)}-${Math.random()
       .toString(36)
       .slice(2, 6)}`;
     setWorktreePrompt({

@@ -62,7 +62,7 @@ mod tests {
             id: "w1".to_string(),
             name: "Workspace".to_string(),
             path: "/tmp".to_string(),
-            codex_bin: None,
+            claude_bin: None,
             kind: WorkspaceKind::Main,
             parent_id: None,
             worktree: None,

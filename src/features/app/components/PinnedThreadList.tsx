@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import type { ThreadSummary } from "../../../types";
@@ -39,9 +40,86 @@ export function PinnedThreadList({
   onSelectThread,
   onShowThreadMenu,
 }: PinnedThreadListProps) {
+  const [collapsedThreadIds, setCollapsedThreadIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const knownParentIdsRef = useRef<Set<string>>(new Set());
+  const parentIds = useMemo(() => {
+    const ids = new Set<string>();
+    rows.forEach((row, index) => {
+      if (rows[index + 1]?.depth > row.depth) {
+        ids.add(row.thread.id);
+      }
+    });
+    return ids;
+  }, [rows]);
+
+  useEffect(() => {
+    setCollapsedThreadIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      const knownParentIds = knownParentIdsRef.current;
+
+      prev.forEach((id) => {
+        if (!parentIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      });
+
+      parentIds.forEach((id) => {
+        if (!knownParentIds.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+
+      knownParentIdsRef.current = new Set(parentIds);
+      return changed ? next : prev;
+    });
+  }, [parentIds]);
+
+  const toggleThreadCollapse = useCallback((threadId: string) => {
+    setCollapsedThreadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
+
+  const visibleRows = useMemo(() => {
+    const nextRows: Array<{
+      row: PinnedThreadRow;
+      hasChildren: boolean;
+      isCollapsed: boolean;
+    }> = [];
+    let hiddenDepth: number | null = null;
+
+    rows.forEach((row, index) => {
+      if (hiddenDepth !== null && row.depth > hiddenDepth) {
+        return;
+      }
+      if (hiddenDepth !== null && row.depth <= hiddenDepth) {
+        hiddenDepth = null;
+      }
+      const hasChildren = rows[index + 1]?.depth > row.depth;
+      const isCollapsed = hasChildren && collapsedThreadIds.has(row.thread.id);
+      if (isCollapsed) {
+        hiddenDepth = row.depth;
+      }
+      nextRows.push({ row, hasChildren, isCollapsed });
+    });
+
+    return nextRows;
+  }, [rows, collapsedThreadIds]);
+
   return (
     <div className="thread-list pinned-thread-list">
-      {rows.map(({ thread, depth, workspaceId }) => {
+      {visibleRows.map(({ row: { thread, depth, workspaceId }, hasChildren, isCollapsed }) => {
         const relativeTime = getThreadTime(thread);
         const indentStyle =
           depth > 0
@@ -80,6 +158,23 @@ export function PinnedThreadList({
               }
             }}
           >
+            {hasChildren ? (
+              <button
+                type="button"
+                className={`thread-toggle${isCollapsed ? "" : " expanded"}`}
+                aria-label={isCollapsed ? "Expand thread" : "Collapse thread"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleThreadCollapse(thread.id);
+                }}
+              >
+                <span className="thread-toggle-icon" aria-hidden>
+                  ▸
+                </span>
+              </button>
+            ) : (
+              <span className="thread-toggle-spacer" aria-hidden />
+            )}
             <span className={`thread-status ${statusClass}`} aria-hidden />
             {isPinned && (
               <span className="thread-pin-icon" aria-label="Pinned">

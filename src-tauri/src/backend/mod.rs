@@ -1,2 +1,2 @@
-pub(crate) mod app_server;
+pub(crate) mod claude_cli;
 pub(crate) mod events;

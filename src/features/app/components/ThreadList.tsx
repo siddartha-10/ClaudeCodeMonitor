@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import type { ThreadSummary } from "../../../types";
@@ -58,8 +59,106 @@ export function ThreadList({
   onSelectThread,
   onShowThreadMenu,
 }: ThreadListProps) {
+  const [collapsedThreadIds, setCollapsedThreadIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const knownParentIdsRef = useRef<Set<string>>(new Set());
+  const parentIds = useMemo(() => {
+    const ids = new Set<string>();
+    const collectParents = (rows: ThreadRow[]) => {
+      rows.forEach((row, index) => {
+        if (rows[index + 1]?.depth > row.depth) {
+          ids.add(row.thread.id);
+        }
+      });
+    };
+    collectParents(pinnedRows);
+    collectParents(unpinnedRows);
+    return ids;
+  }, [pinnedRows, unpinnedRows]);
+
+  useEffect(() => {
+    setCollapsedThreadIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      const knownParentIds = knownParentIdsRef.current;
+
+      prev.forEach((id) => {
+        if (!parentIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      });
+
+      parentIds.forEach((id) => {
+        if (!knownParentIds.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+
+      knownParentIdsRef.current = new Set(parentIds);
+      return changed ? next : prev;
+    });
+  }, [parentIds]);
+
+  const toggleThreadCollapse = useCallback((threadId: string) => {
+    setCollapsedThreadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
+
   const indentUnit = nested ? 10 : 14;
-  const renderThreadRow = ({ thread, depth }: ThreadRow) => {
+  const buildVisibleRows = useCallback((rows: ThreadRow[]) => {
+    const visibleRows: Array<{
+      row: ThreadRow;
+      hasChildren: boolean;
+      isCollapsed: boolean;
+    }> = [];
+    let hiddenDepth: number | null = null;
+
+    rows.forEach((row, index) => {
+      if (hiddenDepth !== null && row.depth > hiddenDepth) {
+        return;
+      }
+      if (hiddenDepth !== null && row.depth <= hiddenDepth) {
+        hiddenDepth = null;
+      }
+      const hasChildren = rows[index + 1]?.depth > row.depth;
+      const isCollapsed = hasChildren && collapsedThreadIds.has(row.thread.id);
+      if (isCollapsed) {
+        hiddenDepth = row.depth;
+      }
+      visibleRows.push({ row, hasChildren, isCollapsed });
+    });
+
+    return visibleRows;
+  }, [collapsedThreadIds]);
+
+  const visiblePinnedRows = useMemo(
+    () => buildVisibleRows(pinnedRows),
+    [pinnedRows, buildVisibleRows],
+  );
+  const visibleUnpinnedRows = useMemo(
+    () => buildVisibleRows(unpinnedRows),
+    [unpinnedRows, buildVisibleRows],
+  );
+
+  const renderThreadRow = ({
+    row: { thread, depth },
+    hasChildren,
+    isCollapsed,
+  }: {
+    row: ThreadRow;
+    hasChildren: boolean;
+    isCollapsed: boolean;
+  }) => {
     const relativeTime = getThreadTime(thread);
     const indentStyle =
       depth > 0
@@ -98,6 +197,23 @@ export function ThreadList({
           }
         }}
       >
+        {hasChildren ? (
+          <button
+            type="button"
+            className={`thread-toggle${isCollapsed ? "" : " expanded"}`}
+            aria-label={isCollapsed ? "Expand thread" : "Collapse thread"}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleThreadCollapse(thread.id);
+            }}
+          >
+            <span className="thread-toggle-icon" aria-hidden>
+              ▸
+            </span>
+          </button>
+        ) : (
+          <span className="thread-toggle-spacer" aria-hidden />
+        )}
         <span className={`thread-status ${statusClass}`} aria-hidden />
         {isPinned && <span className="thread-pin-icon" aria-label="Pinned">📌</span>}
         <span className="thread-name">{thread.name}</span>
@@ -113,11 +229,11 @@ export function ThreadList({
 
   return (
     <div className={`thread-list${nested ? " thread-list-nested" : ""}`}>
-      {pinnedRows.map((row) => renderThreadRow(row))}
-      {pinnedRows.length > 0 && unpinnedRows.length > 0 && (
+      {visiblePinnedRows.map((row) => renderThreadRow(row))}
+      {visiblePinnedRows.length > 0 && visibleUnpinnedRows.length > 0 && (
         <div className="thread-list-separator" aria-hidden="true" />
       )}
-      {unpinnedRows.map((row) => renderThreadRow(row))}
+      {visibleUnpinnedRows.map((row) => renderThreadRow(row))}
       {totalThreadRoots > 3 && (
         <button
           className="thread-more"

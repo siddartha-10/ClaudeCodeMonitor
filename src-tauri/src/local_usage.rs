@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::codex_home::resolve_default_claude_home;
 use crate::types::{LocalUsageDay, LocalUsageModel, LocalUsageSnapshot, LocalUsageTotals};
 
 #[derive(Default, Clone, Copy)]
@@ -61,29 +62,47 @@ fn scan_local_usage(days: u32, workspace_path: Option<&Path>) -> Result<LocalUsa
         .collect();
     let mut model_totals: HashMap<String, i64> = HashMap::new();
 
-    let Some(root) = resolve_codex_sessions_root() else {
+    let Some(root) = resolve_claude_projects_root() else {
         return Ok(build_snapshot(updated_at, day_keys, daily, HashMap::new()));
     };
 
-    for day_key in &day_keys {
-        let day_dir = day_dir_for_key(&root, day_key);
-        if !day_dir.exists() {
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(build_snapshot(updated_at, day_keys, daily, model_totals)),
+    };
+    for entry in entries.flatten() {
+        let project_dir = entry.path();
+        if !project_dir.is_dir() {
             continue;
         }
-        let entries = match std::fs::read_dir(&day_dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-                continue;
-            }
-            scan_file(&path, &mut daily, &mut model_totals, workspace_path)?;
-        }
+        scan_project_dir(&project_dir, &mut daily, &mut model_totals, workspace_path)?;
     }
 
     Ok(build_snapshot(updated_at, day_keys, daily, model_totals))
+}
+
+fn scan_project_dir(
+    dir: &Path,
+    daily: &mut HashMap<String, DailyTotals>,
+    model_totals: &mut HashMap<String, i64>,
+    workspace_path: Option<&Path>,
+) -> Result<(), String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_project_dir(&path, daily, model_totals, workspace_path)?;
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        scan_file(&path, daily, model_totals, workspace_path)?;
+    }
+    Ok(())
 }
 
 fn build_snapshot(
@@ -203,14 +222,12 @@ fn scan_file(
             .and_then(|value| value.as_str())
             .unwrap_or("");
 
-        if entry_type == "session_meta" || entry_type == "turn_context" {
-            if let Some(cwd) = extract_cwd(&value) {
-                if let Some(filter) = workspace_path {
-                    matches_workspace = path_matches_workspace(&cwd, filter);
-                    match_known = true;
-                    if !matches_workspace {
-                        break;
-                    }
+        if let Some(cwd) = extract_cwd(&value) {
+            if let Some(filter) = workspace_path {
+                matches_workspace = path_matches_workspace(&cwd, filter);
+                match_known = true;
+                if !matches_workspace {
+                    break;
                 }
             }
         }
@@ -234,6 +251,55 @@ fn scan_file(
         }
 
         if !match_known {
+            continue;
+        }
+
+        if entry_type == "assistant" {
+            let timestamp_ms = read_timestamp_ms(&value);
+            if let Some(timestamp_ms) = timestamp_ms {
+                if seen_runs.insert(timestamp_ms) {
+                    if let Some(day_key) = day_key_for_timestamp_ms(timestamp_ms) {
+                        if let Some(entry) = daily.get_mut(&day_key) {
+                            entry.agent_runs += 1;
+                        }
+                    }
+                }
+                track_activity(daily, &mut last_activity_ms, timestamp_ms);
+            }
+
+            let message = value.get("message");
+            let usage = message
+                .and_then(|message| message.get("usage"))
+                .and_then(|usage| usage.as_object());
+            if let Some(usage) = usage {
+                let input = read_i64(usage, &["input_tokens", "inputTokens"]);
+                let output = read_i64(usage, &["output_tokens", "outputTokens"]);
+                let cached_read =
+                    read_i64(usage, &["cache_read_input_tokens", "cacheReadInputTokens"]);
+                let cached_create = read_i64(
+                    usage,
+                    &["cache_creation_input_tokens", "cacheCreationInputTokens"],
+                );
+                let cached = (cached_read + cached_create).min(input);
+
+                if input > 0 || output > 0 {
+                    if let Some(day_key) = timestamp_ms.and_then(day_key_for_timestamp_ms) {
+                        if let Some(entry) = daily.get_mut(&day_key) {
+                            entry.input += input;
+                            entry.cached += cached;
+                            entry.output += output;
+
+                            let model = message
+                                .and_then(|message| message.get("model"))
+                                .and_then(|value| value.as_str())
+                                .map(|value| value.to_string())
+                                .or_else(|| current_model.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            *model_totals.entry(model).or_insert(0) += input + output;
+                        }
+                    }
+                }
+            }
             continue;
         }
 
@@ -473,6 +539,9 @@ fn day_key_for_timestamp_ms(timestamp_ms: i64) -> Option<String> {
 }
 
 fn extract_cwd(value: &Value) -> Option<String> {
+    if let Some(cwd) = value.get("cwd").and_then(|cwd| cwd.as_str()) {
+        return Some(cwd.to_string());
+    }
     value
         .get("payload")
         .and_then(|payload| payload.get("cwd"))
@@ -496,42 +565,8 @@ fn make_day_keys(days: u32) -> Vec<String> {
         .collect()
 }
 
-fn resolve_codex_sessions_root() -> Option<PathBuf> {
-    resolve_codex_home().map(|home| home.join("sessions"))
-}
-
-fn resolve_codex_home() -> Option<PathBuf> {
-    if let Ok(value) = std::env::var("CODEX_HOME") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
-    resolve_home_dir().map(|home| home.join(".codex"))
-}
-
-fn resolve_home_dir() -> Option<PathBuf> {
-    if let Ok(value) = std::env::var("HOME") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
-    if let Ok(value) = std::env::var("USERPROFILE") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
-    None
-}
-
-fn day_dir_for_key(root: &Path, day_key: &str) -> PathBuf {
-    let mut parts = day_key.split('-');
-    let year = parts.next().unwrap_or("1970");
-    let month = parts.next().unwrap_or("01");
-    let day = parts.next().unwrap_or("01");
-    root.join(year).join(month).join(day)
+fn resolve_claude_projects_root() -> Option<PathBuf> {
+    resolve_default_claude_home().map(|home| home.join("projects"))
 }
 
 #[cfg(test)]
@@ -641,6 +676,32 @@ mod tests {
 
         let totals = daily.get(day_key).copied().unwrap_or_default();
         assert_eq!(totals.agent_runs, 2);
+    }
+
+    #[test]
+    fn scan_file_counts_claude_assistant_usage() {
+        let day_key = "2026-01-19";
+        let path = write_temp_jsonl(&[
+            r#"{"type":"assistant","timestamp":"2026-01-19T12:00:00.000Z","cwd":"/tmp/project-alpha","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":2,"cache_creation_input_tokens":1,"output_tokens":5},"model":"claude-opus-4-5-20251101","content":[{"type":"text","text":"hi"}]}}"#,
+        ]);
+
+        let mut daily: HashMap<String, DailyTotals> = HashMap::new();
+        daily.insert(day_key.to_string(), DailyTotals::default());
+        let mut model_totals: HashMap<String, i64> = HashMap::new();
+        scan_file(
+            &path,
+            &mut daily,
+            &mut model_totals,
+            Some(Path::new("/tmp/project-alpha")),
+        )
+        .expect("scan file");
+
+        let totals = daily.get(day_key).copied().unwrap_or_default();
+        assert_eq!(totals.input, 10);
+        assert_eq!(totals.cached, 3);
+        assert_eq!(totals.output, 5);
+        assert_eq!(totals.agent_runs, 1);
+        assert_eq!(model_totals.get("claude-opus-4-5-20251101"), Some(&15));
     }
 
     #[test]

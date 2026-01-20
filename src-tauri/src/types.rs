@@ -166,7 +166,8 @@ pub(crate) struct WorkspaceEntry {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) path: String,
-    pub(crate) codex_bin: Option<String>,
+    #[serde(default, alias = "codex_bin")]
+    pub(crate) claude_bin: Option<String>,
     #[serde(default)]
     pub(crate) kind: WorkspaceKind,
     #[serde(default, rename = "parentId")]
@@ -183,7 +184,8 @@ pub(crate) struct WorkspaceInfo {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) connected: bool,
-    pub(crate) codex_bin: Option<String>,
+    #[serde(default, alias = "codex_bin")]
+    pub(crate) claude_bin: Option<String>,
     #[serde(default)]
     pub(crate) kind: WorkspaceKind,
     #[serde(default, rename = "parentId")]
@@ -242,8 +244,8 @@ pub(crate) struct WorkspaceSettings {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct AppSettings {
-    #[serde(default, rename = "codexBin")]
-    pub(crate) codex_bin: Option<String>,
+    #[serde(default, rename = "claudeBin", alias = "codexBin")]
+    pub(crate) claude_bin: Option<String>,
     #[serde(default, rename = "backendMode")]
     pub(crate) backend_mode: BackendMode,
     #[serde(default = "default_remote_backend_host", rename = "remoteBackendHost")]
@@ -389,7 +391,7 @@ fn default_workspace_groups() -> Vec<WorkspaceGroup> {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            codex_bin: None,
+            claude_bin: None,
             backend_mode: BackendMode::Local,
             remote_backend_host: default_remote_backend_host(),
             remote_backend_token: None,
@@ -423,7 +425,7 @@ mod tests {
     #[test]
     fn app_settings_defaults_from_empty_json() {
         let settings: AppSettings = serde_json::from_str("{}").expect("settings deserialize");
-        assert!(settings.codex_bin.is_none());
+        assert!(settings.claude_bin.is_none());
         assert!(matches!(settings.backend_mode, BackendMode::Local));
         assert_eq!(settings.remote_backend_host, "127.0.0.1:4732");
         assert!(settings.remote_backend_token.is_none());

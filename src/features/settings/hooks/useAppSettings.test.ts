@@ -1,24 +1,20 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettings, CodexDoctorResult } from "../../../types";
+import type { AppSettings, ClaudeDoctorResult } from "../../../types";
 import { useAppSettings } from "./useAppSettings";
-import {
-  getAppSettings,
-  runCodexDoctor,
-  updateAppSettings,
-} from "../../../services/tauri";
+import { getAppSettings, runClaudeDoctor, updateAppSettings } from "../../../services/tauri";
 import { UI_SCALE_DEFAULT, UI_SCALE_MAX } from "../../../utils/uiScale";
 
 vi.mock("../../../services/tauri", () => ({
   getAppSettings: vi.fn(),
   updateAppSettings: vi.fn(),
-  runCodexDoctor: vi.fn(),
+  runClaudeDoctor: vi.fn(),
 }));
 
 const getAppSettingsMock = vi.mocked(getAppSettings);
 const updateAppSettingsMock = vi.mocked(updateAppSettings);
-const runCodexDoctorMock = vi.mocked(runCodexDoctor);
+const runClaudeDoctorMock = vi.mocked(runClaudeDoctor);
 
 describe("useAppSettings", () => {
   beforeEach(() => {
@@ -101,36 +97,31 @@ describe("useAppSettings", () => {
 
   it("surfaces doctor errors", async () => {
     getAppSettingsMock.mockResolvedValue({} as AppSettings);
-    runCodexDoctorMock.mockRejectedValue(new Error("doctor fail"));
+    runClaudeDoctorMock.mockRejectedValue(new Error("doctor fail"));
     const { result } = renderHook(() => useAppSettings());
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    await expect(result.current.doctor("/bin/codex")).rejects.toThrow(
+    await expect(result.current.doctor("/bin/claude")).rejects.toThrow(
       "doctor fail",
     );
-    expect(runCodexDoctorMock).toHaveBeenCalledWith("/bin/codex");
+    expect(runClaudeDoctorMock).toHaveBeenCalledWith("/bin/claude");
   });
 
   it("returns doctor results", async () => {
     getAppSettingsMock.mockResolvedValue({} as AppSettings);
-    const response: CodexDoctorResult = {
+    const response: ClaudeDoctorResult = {
       ok: true,
-      codexBin: "/bin/codex",
+      claudeBin: "/bin/claude",
       version: "1.0.0",
-      appServerOk: true,
-      details: null,
       path: null,
-      nodeOk: true,
-      nodeVersion: "20.0.0",
-      nodeDetails: null,
     };
-    runCodexDoctorMock.mockResolvedValue(response);
+    runClaudeDoctorMock.mockResolvedValue(response);
     const { result } = renderHook(() => useAppSettings());
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    await expect(result.current.doctor("/bin/codex")).resolves.toEqual(
+    await expect(result.current.doctor("/bin/claude")).resolves.toEqual(
       response,
     );
   });

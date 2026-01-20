@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppSettings } from "../../../types";
-import { getAppSettings, runCodexDoctor, updateAppSettings } from "../../../services/tauri";
+import { getAppSettings, runClaudeDoctor, updateAppSettings } from "../../../services/tauri";
 import { clampUiScale, UI_SCALE_DEFAULT } from "../../../utils/uiScale";
 
 const allowedThemes = new Set(["system", "light", "dark"]);
 
 const defaultSettings: AppSettings = {
-  codexBin: null,
+  claudeBin: null,
   backendMode: "local",
   remoteBackendHost: "127.0.0.1:4732",
   remoteBackendToken: null,
@@ -79,8 +79,8 @@ export function useAppSettings() {
     return saved;
   }, []);
 
-  const doctor = useCallback(async (codexBin: string | null) => {
-    return runCodexDoctor(codexBin);
+  const doctor = useCallback(async (claudeBin: string | null) => {
+    return runClaudeDoctor(claudeBin);
   }, []);
 
   return {

@@ -694,6 +694,19 @@ export function useThreads({
     [applyCollabThreadLinks],
   );
 
+  const applyParentLinksFromThreads = useCallback(
+    (threads: Record<string, unknown>[]) => {
+      threads.forEach((thread) => {
+        const threadId = asString(thread?.id ?? "");
+        const parentId = asString(thread?.parentId ?? thread?.parent_id ?? "");
+        if (threadId && parentId) {
+          updateThreadParent(parentId, [threadId]);
+        }
+      });
+    },
+    [updateThreadParent],
+  );
+
   const handleItemUpdate = useCallback(
     (
       workspaceId: string,
@@ -793,7 +806,7 @@ export function useThreads({
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
         const inferredSource =
-          method === "codex/stderr" ? "stderr" : "event";
+          method === "codex/stderr" || method === "claude/stderr" ? "stderr" : "event";
         onDebug?.({
           id: `${Date.now()}-server-event`,
           timestamp: Date.now(),
@@ -1002,6 +1015,7 @@ export function useThreads({
       getCustomName,
       handleWorkspaceConnected,
       handleItemUpdate,
+      handleTerminalInteraction,
       handleToolOutputDelta,
       markProcessing,
       onDebug,
@@ -1297,6 +1311,7 @@ export function useThreads({
           const bActivity = Math.max(nextActivityByThread[bId] ?? 0, bCreated);
           return bActivity - aActivity;
         });
+        applyParentLinksFromThreads(uniqueThreads);
         const summaries = uniqueThreads
           .slice(0, targetCount)
           .map((thread, index) => {
@@ -1357,7 +1372,7 @@ export function useThreads({
         });
       }
     },
-    [getCustomName, onDebug],
+    [applyParentLinksFromThreads, getCustomName, onDebug],
   );
 
   const loadOlderThreadsForWorkspace = useCallback(
@@ -1420,6 +1435,7 @@ export function useThreads({
           }
         } while (cursor && matchingThreads.length < targetCount);
 
+        applyParentLinksFromThreads(matchingThreads);
         const existingIds = new Set(existing.map((thread) => thread.id));
         const additions: ThreadSummary[] = [];
         matchingThreads.forEach((thread) => {
@@ -1483,6 +1499,7 @@ export function useThreads({
       }
     },
     [
+      applyParentLinksFromThreads,
       getCustomName,
       onDebug,
       state.threadListCursorByWorkspace,

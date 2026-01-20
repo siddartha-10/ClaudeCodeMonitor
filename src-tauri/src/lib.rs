@@ -2,7 +2,7 @@ use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 mod backend;
-mod codex;
+mod claude;
 mod codex_home;
 mod codex_config;
 #[cfg(not(target_os = "windows"))]
@@ -17,7 +17,6 @@ mod git_utils;
 mod local_usage;
 mod prompts;
 mod remote_backend;
-mod rules;
 mod settings;
 mod state;
 mod terminal;
@@ -214,7 +213,7 @@ pub fn run() {
                         "about",
                         WebviewUrl::App("index.html".into()),
                     )
-                    .title("About Codex Monitor")
+                    .title("About Claude Code Monitor")
                     .resizable(false)
                     .inner_size(360.0, 240.0)
                     .center()
@@ -279,7 +278,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             settings::get_app_settings,
             settings::update_app_settings,
-            codex::codex_doctor,
+            claude::claude_doctor,
             workspaces::list_workspaces,
             workspaces::add_workspace,
             workspaces::add_clone,
@@ -290,19 +289,19 @@ pub fn run() {
             workspaces::rename_worktree_upstream,
             workspaces::apply_worktree_changes,
             workspaces::update_workspace_settings,
-            workspaces::update_workspace_codex_bin,
-            codex::start_thread,
-            codex::send_user_message,
-            codex::turn_interrupt,
-            codex::start_review,
-            codex::respond_to_server_request,
-            codex::remember_approval_rule,
-            codex::get_commit_message_prompt,
-            codex::generate_commit_message,
-            codex::resume_thread,
-            codex::list_threads,
-            codex::archive_thread,
-            codex::collaboration_mode_list,
+            workspaces::update_workspace_claude_bin,
+            claude::start_thread,
+            claude::send_user_message,
+            claude::turn_interrupt,
+            claude::start_review,
+            claude::respond_to_server_request,
+            claude::remember_approval_rule,
+            claude::get_commit_message_prompt,
+            claude::generate_commit_message,
+            claude::resume_thread,
+            claude::list_threads,
+            claude::archive_thread,
+            claude::collaboration_mode_list,
             workspaces::connect_workspace,
             git::get_git_status,
             git::list_git_roots,
@@ -328,9 +327,9 @@ pub fn run() {
             git::list_git_branches,
             git::checkout_git_branch,
             git::create_git_branch,
-            codex::model_list,
-            codex::account_rate_limits,
-            codex::skills_list,
+            claude::model_list,
+            claude::account_rate_limits,
+            claude::skills_list,
             prompts::prompts_list,
             prompts::prompts_create,
             prompts::prompts_update,

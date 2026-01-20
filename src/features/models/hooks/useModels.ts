@@ -10,7 +10,7 @@ type UseModelsOptions = {
 };
 
 const pickDefaultModel = (models: ModelOption[]) =>
-  models.find((model) => model.model === "gpt-5.2-codex") ??
+  models.find((model) => model.model === "claude-opus-4-5-20251101") ??
   models.find((model) => model.isDefault) ??
   models[0] ??
   null;

@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 const baseSettings: AppSettings = {
-  codexBin: null,
+  claudeBin: null,
   backendMode: "local",
   remoteBackendHost: "127.0.0.1:4732",
   remoteBackendToken: null,
@@ -43,14 +43,9 @@ const baseSettings: AppSettings = {
 
 const createDoctorResult = () => ({
   ok: true,
-  codexBin: null,
+  claudeBin: null,
   version: null,
-  appServerOk: true,
-  details: null,
   path: null,
-  nodeOk: true,
-  nodeVersion: null,
-  nodeDetails: null,
 });
 
 const renderDisplaySection = (
@@ -82,7 +77,7 @@ const renderDisplaySection = (
     appSettings: { ...baseSettings, ...options.appSettings },
     onUpdateAppSettings,
     onRunDoctor: vi.fn().mockResolvedValue(createDoctorResult()),
-    onUpdateWorkspaceCodexBin: vi.fn().mockResolvedValue(undefined),
+    onUpdateWorkspaceClaudeBin: vi.fn().mockResolvedValue(undefined),
     scaleShortcutTitle: "Scale shortcut",
     scaleShortcutText: "Use Command +/-",
     onTestNotificationSound: vi.fn(),

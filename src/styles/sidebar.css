@@ -470,6 +470,36 @@
   position: relative;
 }
 
+.thread-toggle,
+.thread-toggle-spacer {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.thread-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 0;
+  cursor: pointer;
+}
+
+.thread-toggle-icon {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.thread-toggle.expanded .thread-toggle-icon {
+  transform: rotate(90deg);
+}
+
 .thread-status {
   width: 6px;
   height: 6px;

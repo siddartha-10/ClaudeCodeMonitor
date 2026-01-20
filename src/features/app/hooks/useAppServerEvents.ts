@@ -68,7 +68,7 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
       const { workspace_id, message } = payload;
       const method = String(message.method ?? "");
 
-      if (method === "codex/connected") {
+      if (method === "claude/connected") {
         handlers.onWorkspaceConnected?.(workspace_id);
         return;
       }

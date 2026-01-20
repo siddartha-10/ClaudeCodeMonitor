@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import type {
   AppSettings,
-  CodexDoctorResult,
+  ClaudeDoctorResult,
   DictationModelStatus,
   WorkspaceGroup,
   WorkspaceInfo,
@@ -55,8 +55,8 @@ type SettingsViewProps = {
   onToggleTransparency: (value: boolean) => void;
   appSettings: AppSettings;
   onUpdateAppSettings: (next: AppSettings) => Promise<void>;
-  onRunDoctor: (codexBin: string | null) => Promise<CodexDoctorResult>;
-  onUpdateWorkspaceCodexBin: (id: string, codexBin: string | null) => Promise<void>;
+  onRunDoctor: (claudeBin: string | null) => Promise<ClaudeDoctorResult>;
+  onUpdateWorkspaceClaudeBin: (id: string, claudeBin: string | null) => Promise<void>;
   scaleShortcutTitle: string;
   scaleShortcutText: string;
   onTestNotificationSound: () => void;
@@ -64,11 +64,11 @@ type SettingsViewProps = {
   onDownloadDictationModel?: () => void;
   onCancelDictationDownload?: () => void;
   onRemoveDictationModel?: () => void;
-  initialSection?: CodexSection;
+  initialSection?: ClaudeSection;
 };
 
 type SettingsSection = "projects" | "display" | "dictation" | "shortcuts";
-type CodexSection = SettingsSection | "codex" | "experimental";
+type ClaudeSection = SettingsSection | "claude" | "experimental";
 
 export function SettingsView({
   workspaceGroups,
@@ -87,7 +87,7 @@ export function SettingsView({
   appSettings,
   onUpdateAppSettings,
   onRunDoctor,
-  onUpdateWorkspaceCodexBin,
+  onUpdateWorkspaceClaudeBin,
   scaleShortcutTitle,
   scaleShortcutText,
   onTestNotificationSound,
@@ -97,8 +97,8 @@ export function SettingsView({
   onRemoveDictationModel,
   initialSection,
 }: SettingsViewProps) {
-  const [activeSection, setActiveSection] = useState<CodexSection>("projects");
-  const [codexPathDraft, setCodexPathDraft] = useState(appSettings.codexBin ?? "");
+  const [activeSection, setActiveSection] = useState<ClaudeSection>("projects");
+  const [claudePathDraft, setClaudePathDraft] = useState(appSettings.claudeBin ?? "");
   const [remoteHostDraft, setRemoteHostDraft] = useState(appSettings.remoteBackendHost);
   const [remoteTokenDraft, setRemoteTokenDraft] = useState(appSettings.remoteBackendToken ?? "");
   const [scaleDraft, setScaleDraft] = useState(
@@ -110,7 +110,7 @@ export function SettingsView({
   const [groupError, setGroupError] = useState<string | null>(null);
   const [doctorState, setDoctorState] = useState<{
     status: "idle" | "running" | "done";
-    result: CodexDoctorResult | null;
+    result: ClaudeDoctorResult | null;
   }>({ status: "idle", result: null });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState({
@@ -134,8 +134,8 @@ export function SettingsView({
   );
 
   useEffect(() => {
-    setCodexPathDraft(appSettings.codexBin ?? "");
-  }, [appSettings.codexBin]);
+    setClaudePathDraft(appSettings.claudeBin ?? "");
+  }, [appSettings.claudeBin]);
 
   useEffect(() => {
     setRemoteHostDraft(appSettings.remoteBackendHost);
@@ -166,7 +166,7 @@ export function SettingsView({
       const next: Record<string, string> = {};
       projects.forEach((workspace) => {
         next[workspace.id] =
-          prev[workspace.id] ?? workspace.codex_bin ?? "";
+          prev[workspace.id] ?? workspace.claude_bin ?? "";
       });
       return next;
     });
@@ -188,8 +188,8 @@ export function SettingsView({
     }
   }, [initialSection]);
 
-  const codexDirty =
-    (codexPathDraft.trim() || null) !== (appSettings.codexBin ?? null);
+  const claudeDirty =
+    (claudePathDraft.trim() || null) !== (appSettings.claudeBin ?? null);
 
   const trimmedScale = scaleDraft.trim();
   const parsedPercent = trimmedScale
@@ -197,12 +197,12 @@ export function SettingsView({
     : Number.NaN;
   const parsedScale = Number.isFinite(parsedPercent) ? parsedPercent / 100 : null;
 
-  const handleSaveCodexSettings = async () => {
+  const handleSaveClaudeSettings = async () => {
     setIsSavingSettings(true);
     try {
       await onUpdateAppSettings({
         ...appSettings,
-        codexBin: codexPathDraft.trim() ? codexPathDraft.trim() : null,
+        claudeBin: claudePathDraft.trim() ? claudePathDraft.trim() : null,
       });
     } finally {
       setIsSavingSettings(false);
@@ -261,19 +261,19 @@ export function SettingsView({
     });
   };
 
-  const handleBrowseCodex = async () => {
+  const handleBrowseClaude = async () => {
     const selection = await open({ multiple: false, directory: false });
     if (!selection || Array.isArray(selection)) {
       return;
     }
-    setCodexPathDraft(selection);
+    setClaudePathDraft(selection);
   };
 
   const handleRunDoctor = async () => {
     setDoctorState({ status: "running", result: null });
     try {
       const result = await onRunDoctor(
-        codexPathDraft.trim() ? codexPathDraft.trim() : null,
+        claudePathDraft.trim() ? claudePathDraft.trim() : null,
       );
       setDoctorState({ status: "done", result });
     } catch (error) {
@@ -281,14 +281,9 @@ export function SettingsView({
         status: "done",
         result: {
           ok: false,
-          codexBin: codexPathDraft.trim() ? codexPathDraft.trim() : null,
+          claudeBin: claudePathDraft.trim() ? claudePathDraft.trim() : null,
           version: null,
-          appServerOk: false,
-          details: error instanceof Error ? error.message : String(error),
           path: null,
-          nodeOk: false,
-          nodeVersion: null,
-          nodeDetails: null,
         },
       });
     }
@@ -478,11 +473,11 @@ export function SettingsView({
             </button>
             <button
               type="button"
-              className={`settings-nav ${activeSection === "codex" ? "active" : ""}`}
-              onClick={() => setActiveSection("codex")}
+              className={`settings-nav ${activeSection === "claude" ? "active" : ""}`}
+              onClick={() => setActiveSection("claude")}
             >
               <TerminalSquare aria-hidden />
-              Codex
+              Claude
             </button>
             <button
               type="button"
@@ -1112,31 +1107,31 @@ export function SettingsView({
                 </div>
               </section>
             )}
-            {activeSection === "codex" && (
+            {activeSection === "claude" && (
               <section className="settings-section">
-                <div className="settings-section-title">Codex</div>
+                <div className="settings-section-title">Claude Code</div>
                 <div className="settings-section-subtitle">
-                  Configure the Codex CLI used by CodexMonitor and validate the install.
+                  Configure the Claude Code CLI used by Claude Code Monitor and validate the install.
                 </div>
                 <div className="settings-field">
-                  <label className="settings-field-label" htmlFor="codex-path">
-                    Default Codex path
+                  <label className="settings-field-label" htmlFor="claude-path">
+                    Default Claude path
                   </label>
                   <div className="settings-field-row">
                     <input
-                      id="codex-path"
+                      id="claude-path"
                       className="settings-input"
-                      value={codexPathDraft}
-                      placeholder="codex"
-                      onChange={(event) => setCodexPathDraft(event.target.value)}
+                      value={claudePathDraft}
+                      placeholder="claude"
+                      onChange={(event) => setClaudePathDraft(event.target.value)}
                     />
-                    <button type="button" className="ghost" onClick={handleBrowseCodex}>
+                    <button type="button" className="ghost" onClick={handleBrowseClaude}>
                       Browse
                     </button>
                     <button
                       type="button"
                       className="ghost"
-                      onClick={() => setCodexPathDraft("")}
+                      onClick={() => setClaudePathDraft("")}
                     >
                       Use PATH
                     </button>
@@ -1145,11 +1140,11 @@ export function SettingsView({
                     Leave empty to use the system PATH resolution.
                   </div>
                 <div className="settings-field-actions">
-                  {codexDirty && (
+                  {claudeDirty && (
                     <button
                       type="button"
                       className="primary"
-                      onClick={handleSaveCodexSettings}
+                      onClick={handleSaveClaudeSettings}
                       disabled={isSavingSettings}
                     >
                       {isSavingSettings ? "Saving..." : "Save"}
@@ -1171,26 +1166,14 @@ export function SettingsView({
                     className={`settings-doctor ${doctorState.result.ok ? "ok" : "error"}`}
                   >
                     <div className="settings-doctor-title">
-                      {doctorState.result.ok ? "Codex looks good" : "Codex issue detected"}
+                      {doctorState.result.ok ? "Claude looks good" : "Claude issue detected"}
                     </div>
                     <div className="settings-doctor-body">
                       <div>
                         Version: {doctorState.result.version ?? "unknown"}
                       </div>
-                      <div>
-                        App-server: {doctorState.result.appServerOk ? "ok" : "failed"}
-                      </div>
-                      <div>
-                        Node:{" "}
-                        {doctorState.result.nodeOk
-                          ? `ok (${doctorState.result.nodeVersion ?? "unknown"})`
-                          : "missing"}
-                      </div>
-                      {doctorState.result.details && (
-                        <div>{doctorState.result.details}</div>
-                      )}
-                      {doctorState.result.nodeDetails && (
-                        <div>{doctorState.result.nodeDetails}</div>
+                      {doctorState.result.claudeBin && (
+                        <div>Binary: {doctorState.result.claudeBin}</div>
                       )}
                       {doctorState.result.path && (
                         <div className="settings-doctor-path">
@@ -1285,7 +1268,8 @@ export function SettingsView({
                       />
                     </div>
                     <div className="settings-help">
-                      Start the daemon separately and point CodexMonitor to it (host:port + token).
+                      Start the daemon separately and point Claude Code Monitor to it (host:port +
+                      token).
                     </div>
                   </div>
                 )}
@@ -1313,10 +1297,10 @@ export function SettingsView({
                             onBlur={async () => {
                               const draft = overrideDrafts[workspace.id] ?? "";
                               const nextValue = draft.trim() || null;
-                              if (nextValue === (workspace.codex_bin ?? null)) {
+                              if (nextValue === (workspace.claude_bin ?? null)) {
                                 return;
                               }
-                              await onUpdateWorkspaceCodexBin(workspace.id, nextValue);
+                              await onUpdateWorkspaceClaudeBin(workspace.id, nextValue);
                             }}
                           />
                           <button
@@ -1327,7 +1311,7 @@ export function SettingsView({
                                 ...prev,
                                 [workspace.id]: "",
                               }));
-                              await onUpdateWorkspaceCodexBin(workspace.id, null);
+                              await onUpdateWorkspaceClaudeBin(workspace.id, null);
                             }}
                           >
                             Clear
@@ -1353,7 +1337,7 @@ export function SettingsView({
                   <div>
                     <div className="settings-toggle-title">Collab mode</div>
                     <div className="settings-toggle-subtitle">
-                      Enable multi-agent collaboration tools in Codex.
+                      Enable multi-agent collaboration tools in Claude.
                     </div>
                   </div>
                   <button
