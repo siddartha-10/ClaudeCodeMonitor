@@ -1,8 +1,9 @@
-# CodexMonitor
+# ClaudeCodeMonitor
 
-![CodexMonitor](screenshot.png)
+<img width="1198" height="698" alt="image" src="https://github.com/user-attachments/assets/d16eb549-4297-4e73-8ffc-2e18ae594ac4" />
 
-CodexMonitor is a macOS Tauri app for orchestrating multiple Codex agents across local workspaces. It provides a sidebar to manage projects, a home screen for quick actions, and a conversation view backed by the Codex app-server protocol.
+
+ClaudeCodeMonitor is a macOS Tauri app for orchestrating multiple Codex agents across local workspaces. It provides a sidebar to manage projects, a home screen for quick actions, and a conversation view backed by the Codex app-server protocol.
 
 ## Features
 
