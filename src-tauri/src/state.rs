@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
 use crate::dictation::DictationState;
 use crate::storage::{read_settings, read_workspaces};
@@ -12,6 +12,7 @@ use crate::types::{AppSettings, WorkspaceEntry};
 pub(crate) struct AppState {
     pub(crate) workspaces: Mutex<HashMap<String, WorkspaceEntry>>,
     pub(crate) sessions: Mutex<HashMap<String, Arc<crate::claude::WorkspaceSession>>>,
+    pub(crate) thread_watchers: Mutex<HashMap<String, WorkspaceWatcher>>,
     pub(crate) terminal_sessions:
         Mutex<HashMap<String, Arc<crate::terminal::TerminalSession>>>,
     pub(crate) remote_backend: Mutex<Option<crate::remote_backend::RemoteBackend>>,
@@ -19,6 +20,11 @@ pub(crate) struct AppState {
     pub(crate) settings_path: PathBuf,
     pub(crate) app_settings: Mutex<AppSettings>,
     pub(crate) dictation: Mutex<DictationState>,
+}
+
+pub(crate) struct WorkspaceWatcher {
+    pub(crate) shutdown: watch::Sender<bool>,
+    pub(crate) workspace_path: String,
 }
 
 impl AppState {
@@ -34,6 +40,7 @@ impl AppState {
         Self {
             workspaces: Mutex::new(workspaces),
             sessions: Mutex::new(HashMap::new()),
+            thread_watchers: Mutex::new(HashMap::new()),
             terminal_sessions: Mutex::new(HashMap::new()),
             remote_backend: Mutex::new(None),
             storage_path,

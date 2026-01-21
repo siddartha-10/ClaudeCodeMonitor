@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::codex_home::resolve_default_claude_home;
@@ -24,6 +25,22 @@ struct UsageTotals {
     cached: i64,
     output: i64,
 }
+
+#[derive(Default, Clone)]
+struct CachedFileUsage {
+    file_mtime: i64,
+    daily: HashMap<String, DailyTotals>,
+    model_totals: HashMap<String, i64>,
+}
+
+#[derive(Default)]
+struct LocalUsageCache {
+    days: u32,
+    workspace_key: Option<String>,
+    files: HashMap<PathBuf, CachedFileUsage>,
+}
+
+static LOCAL_USAGE_CACHE: OnceLock<Mutex<LocalUsageCache>> = OnceLock::new();
 
 const MAX_ACTIVITY_GAP_MS: i64 = 2 * 60 * 1000;
 
@@ -62,10 +79,20 @@ fn scan_local_usage(days: u32, workspace_path: Option<&Path>) -> Result<LocalUsa
         .collect();
     let mut model_totals: HashMap<String, i64> = HashMap::new();
 
+    let workspace_key = workspace_path.map(|path| path.to_string_lossy().to_string());
+    let cache = LOCAL_USAGE_CACHE.get_or_init(|| Mutex::new(LocalUsageCache::default()));
+    let mut cache = cache.lock().map_err(|_| "local usage cache lock poisoned")?;
+    if cache.days != days || cache.workspace_key != workspace_key {
+        cache.days = days;
+        cache.workspace_key = workspace_key;
+        cache.files.clear();
+    }
+
     let Some(root) = resolve_claude_projects_root() else {
         return Ok(build_snapshot(updated_at, day_keys, daily, HashMap::new()));
     };
 
+    let mut files = Vec::new();
     let entries = match std::fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(_) => return Ok(build_snapshot(updated_at, day_keys, daily, model_totals)),
@@ -75,18 +102,46 @@ fn scan_local_usage(days: u32, workspace_path: Option<&Path>) -> Result<LocalUsa
         if !project_dir.is_dir() {
             continue;
         }
-        scan_project_dir(&project_dir, &mut daily, &mut model_totals, workspace_path)?;
+        collect_project_files(&project_dir, &mut files)?;
     }
+
+    let mut seen_files: HashSet<PathBuf> = HashSet::new();
+    for path in files {
+        seen_files.insert(path.clone());
+        let file_mtime = file_mtime(&path);
+        let cached = cache
+            .files
+            .get(&path)
+            .filter(|cached| cached.file_mtime == file_mtime);
+        let usage = if let Some(cached) = cached {
+            cached.clone()
+        } else {
+            let usage = scan_file_usage(&path, &day_keys, workspace_path)?;
+            cache.files.insert(path.clone(), usage.clone());
+            usage
+        };
+
+        for (day_key, totals) in usage.daily.iter() {
+            if let Some(entry) = daily.get_mut(day_key) {
+                entry.input += totals.input;
+                entry.cached += totals.cached;
+                entry.output += totals.output;
+                entry.agent_ms += totals.agent_ms;
+                entry.agent_runs += totals.agent_runs;
+            }
+        }
+
+        for (model, tokens) in usage.model_totals.iter() {
+            *model_totals.entry(model.clone()).or_insert(0) += tokens;
+        }
+    }
+
+    cache.files.retain(|path, _| seen_files.contains(path));
 
     Ok(build_snapshot(updated_at, day_keys, daily, model_totals))
 }
 
-fn scan_project_dir(
-    dir: &Path,
-    daily: &mut HashMap<String, DailyTotals>,
-    model_totals: &mut HashMap<String, i64>,
-    workspace_path: Option<&Path>,
-) -> Result<(), String> {
+fn collect_project_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return Ok(()),
@@ -94,15 +149,41 @@ fn scan_project_dir(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scan_project_dir(&path, daily, model_totals, workspace_path)?;
+            collect_project_files(&path, files)?;
             continue;
         }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-            continue;
+        if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            files.push(path);
         }
-        scan_file(&path, daily, model_totals, workspace_path)?;
     }
     Ok(())
+}
+
+fn file_mtime(path: &Path) -> i64 {
+    path.metadata()
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn scan_file_usage(
+    path: &Path,
+    day_keys: &[String],
+    workspace_path: Option<&Path>,
+) -> Result<CachedFileUsage, String> {
+    let mut daily: HashMap<String, DailyTotals> = day_keys
+        .iter()
+        .map(|key| (key.clone(), DailyTotals::default()))
+        .collect();
+    let mut model_totals: HashMap<String, i64> = HashMap::new();
+    scan_file(path, &mut daily, &mut model_totals, workspace_path)?;
+    Ok(CachedFileUsage {
+        file_mtime: file_mtime(path),
+        daily,
+        model_totals,
+    })
 }
 
 fn build_snapshot(

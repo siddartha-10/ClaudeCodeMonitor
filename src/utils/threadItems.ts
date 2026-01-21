@@ -151,7 +151,17 @@ export function buildConversationItem(
   if (!id || !type) {
     return null;
   }
-  if (type === "agentMessage" || type === "userMessage") {
+  if (type === "userMessage") {
+    const content = Array.isArray(item.content) ? item.content : [];
+    const text = userInputsToText(content);
+    return {
+      id,
+      kind: "message",
+      role: "user",
+      text: text || "[message]",
+    };
+  }
+  if (type === "agentMessage") {
     return null;
   }
   if (type === "reasoning") {

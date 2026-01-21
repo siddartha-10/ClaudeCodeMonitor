@@ -36,6 +36,7 @@ type AppServerEventHandlers = {
     turnId: string,
     payload: { explanation: unknown; plan: unknown },
   ) => void;
+  onThreadCreated?: (workspaceId: string, thread: Record<string, unknown>) => void;
   onItemStarted?: (workspaceId: string, threadId: string, item: Record<string, unknown>) => void;
   onItemCompleted?: (workspaceId: string, threadId: string, item: Record<string, unknown>) => void;
   onReasoningSummaryDelta?: (workspaceId: string, threadId: string, itemId: string, delta: string) => void;
@@ -160,6 +161,15 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
         const diff = String(params.diff ?? "");
         if (threadId && diff) {
           handlers.onTurnDiffUpdated?.(workspace_id, threadId, diff);
+        }
+        return;
+      }
+
+      if (method === "thread/created") {
+        const params = message.params as Record<string, unknown>;
+        const thread = params.thread as Record<string, unknown> | undefined;
+        if (thread) {
+          handlers.onThreadCreated?.(workspace_id, thread);
         }
         return;
       }

@@ -1,7 +1,7 @@
 use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, State};
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
-use tokio::sync::Mutex;
-use tokio::time::timeout;
+use tokio::sync::{watch, Mutex};
+use tokio::time::{interval, sleep, timeout};
 use uuid::Uuid;
 
 pub(crate) use crate::backend::claude_cli::WorkspaceSession;
@@ -23,7 +23,7 @@ use crate::backend::events::{AppServerEvent, EventSink};
 use crate::codex_home::{resolve_default_claude_home, resolve_workspace_claude_home};
 use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
-use crate::state::AppState;
+use crate::state::{AppState, WorkspaceWatcher};
 use crate::types::WorkspaceEntry;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,6 +44,7 @@ struct ClaudeSessionEntry {
     #[serde(rename = "projectPath")]
     project_path: Option<String>,
     #[serde(rename = "isSidechain")]
+    #[allow(dead_code)]
     is_sidechain: Option<bool>,
 }
 
@@ -52,6 +53,45 @@ pub(crate) async fn spawn_workspace_session(
     default_claude_bin: Option<String>,
 ) -> Result<Arc<WorkspaceSession>, String> {
     spawn_workspace_session_inner(entry, default_claude_bin).await
+}
+
+pub(crate) async fn ensure_workspace_thread_watcher(
+    workspace_id: &str,
+    entry: WorkspaceEntry,
+    state: &AppState,
+    app: AppHandle,
+) {
+    let mut watchers = state.thread_watchers.lock().await;
+    if let Some(existing) = watchers.get(workspace_id) {
+        if existing.workspace_path == entry.path {
+            return;
+        }
+        let _ = existing.shutdown.send(true);
+    }
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    watchers.insert(
+        workspace_id.to_string(),
+        WorkspaceWatcher {
+            shutdown: shutdown_tx,
+            workspace_path: entry.path.clone(),
+        },
+    );
+    let event_sink = TauriEventSink::new(app);
+    tokio::spawn(watch_workspace_threads(
+        workspace_id.to_string(),
+        entry,
+        event_sink,
+        shutdown_rx,
+    ));
+}
+
+pub(crate) async fn stop_workspace_thread_watcher(
+    workspace_id: &str,
+    state: &AppState,
+) {
+    if let Some(existing) = state.thread_watchers.lock().await.remove(workspace_id) {
+        let _ = existing.shutdown.send(true);
+    }
 }
 
 #[tauri::command]
@@ -187,7 +227,6 @@ pub(crate) async fn list_threads(
         .collect::<std::collections::HashSet<_>>();
     let mut sorted = entries
         .into_iter()
-        .filter(|entry| entry.is_sidechain.unwrap_or(false) == false)
         .filter(|entry| !archived_set.contains(&entry.session_id))
         .collect::<Vec<_>>();
     sorted.sort_by(|a, b| session_sort_key(b).cmp(&session_sort_key(a)));
@@ -300,6 +339,8 @@ pub(crate) async fn send_user_message(
         .ok_or("workspace not connected")?
         .clone();
     drop(sessions);
+
+    ensure_workspace_thread_watcher(&workspace_id, session.entry.clone(), &state, app.clone()).await;
 
     let prompt = build_prompt_with_images(text, images);
     if prompt.trim().is_empty() {
@@ -859,6 +900,7 @@ async fn run_claude_turn(
                             .get(tool_use_id)
                             .cloned()
                             .unwrap_or(Value::Null);
+                        output = collapse_subagent_output(output, &command, &tool_input, &value);
                         let item_id = if tool_use_id.is_empty() {
                             tool_counter += 1;
                             format!("{turn_id}-tool-result-{tool_counter}")
@@ -895,6 +937,7 @@ async fn run_claude_turn(
         let mut guard = child.lock().await;
         guard.wait().await.map_err(|err| err.to_string())?
     };
+
     session.clear_turn(thread_id, &turn_id).await;
 
     let stderr_output = stderr_handle
@@ -1111,6 +1154,7 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                     .get(tool_use_id)
                     .cloned()
                     .unwrap_or(Value::Null);
+                output = collapse_subagent_output(output, &command, &tool_input, &value);
                 let id = if tool_use_id.is_empty() {
                     format!("{thread_id}-tool-result-{}", items.len())
                 } else {
@@ -1245,17 +1289,54 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
 }
 
 fn load_sessions_index(entry: &WorkspaceEntry) -> Vec<ClaudeSessionEntry> {
-    let entries = resolve_sessions_index_path(entry)
+    let mut entries = resolve_sessions_index_path(entry)
         .and_then(|index_path| fs::read_to_string(index_path).ok())
         .and_then(|data| serde_json::from_str::<Value>(&data).ok())
         .map(|value| parse_sessions_value(&value))
         .unwrap_or_default();
 
-    if !entries.is_empty() {
-        return entries;
+    let scanned = scan_project_sessions(entry);
+    if entries.is_empty() {
+        return scanned;
     }
 
-    scan_project_sessions(entry)
+    let mut merged: HashMap<String, ClaudeSessionEntry> = HashMap::new();
+    for entry in entries.drain(..) {
+        merged.insert(entry.session_id.clone(), entry);
+    }
+    for scanned_entry in scanned {
+        let session_id = scanned_entry.session_id.clone();
+        match merged.get_mut(&session_id) {
+            Some(existing) => {
+                if existing.file_mtime.is_none()
+                    || scanned_entry
+                        .file_mtime
+                        .zip(existing.file_mtime)
+                        .map(|(scanned, current)| scanned > current)
+                        .unwrap_or(false)
+                {
+                    existing.file_mtime = scanned_entry.file_mtime;
+                }
+                if existing.first_prompt.is_none() {
+                    existing.first_prompt = scanned_entry.first_prompt;
+                }
+                if existing.message_count.is_none() {
+                    existing.message_count = scanned_entry.message_count;
+                }
+                if existing.git_branch.is_none() {
+                    existing.git_branch = scanned_entry.git_branch;
+                }
+                if existing.project_path.is_none() {
+                    existing.project_path = scanned_entry.project_path;
+                }
+            }
+            None => {
+                merged.insert(session_id, scanned_entry);
+            }
+        }
+    }
+
+    merged.into_values().collect()
 }
 
 fn parse_sessions_value(value: &Value) -> Vec<ClaudeSessionEntry> {
@@ -1315,6 +1396,36 @@ fn scan_project_sessions(entry: &WorkspaceEntry) -> Vec<ClaudeSessionEntry> {
         });
     }
     entries
+}
+
+fn list_session_files(entry: &WorkspaceEntry) -> Vec<(String, PathBuf, i64)> {
+    let Some(project_dir) = resolve_project_dir(entry) else {
+        return Vec::new();
+    };
+    let dir_entries = match fs::read_dir(project_dir) {
+        Ok(dir_entries) => dir_entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut sessions = Vec::new();
+    for dir_entry in dir_entries.flatten() {
+        let path = dir_entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let session_id = match path.file_stem().and_then(|stem| stem.to_str()) {
+            Some(stem) if !stem.is_empty() => stem.to_string(),
+            _ => continue,
+        };
+        let file_mtime = dir_entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        sessions.push((session_id, path, file_mtime));
+    }
+    sessions
 }
 
 fn scan_session_metadata(path: &Path) -> (Option<String>, Option<i64>, Option<String>) {
@@ -1398,16 +1509,19 @@ fn resolve_subagent_path(
     }
 }
 
-fn list_subagent_threads(entry: &WorkspaceEntry, parent_id: &str, cwd: &str) -> Vec<Value> {
-    let mut threads = Vec::new();
+fn list_subagent_files(
+    entry: &WorkspaceEntry,
+    parent_id: &str,
+) -> Vec<(String, PathBuf, i64)> {
+    let mut files = Vec::new();
     let project_dir = match resolve_project_dir(entry) {
         Some(dir) => dir,
-        None => return threads,
+        None => return files,
     };
     let subagent_dir = project_dir.join(parent_id).join("subagents");
     let dir_entries = match fs::read_dir(subagent_dir) {
         Ok(entries) => entries,
-        Err(_) => return threads,
+        Err(_) => return files,
     };
     for dir_entry in dir_entries.flatten() {
         let path = dir_entry.path();
@@ -1418,26 +1532,401 @@ fn list_subagent_threads(entry: &WorkspaceEntry, parent_id: &str, cwd: &str) -> 
             Some(stem) if !stem.is_empty() => stem.to_string(),
             _ => continue,
         };
-        let metadata = dir_entry.metadata().ok();
-        let file_mtime = metadata
+        let file_mtime = dir_entry
+            .metadata()
+            .ok()
             .and_then(|meta| meta.modified().ok())
             .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis() as i64)
             .unwrap_or(0);
-        let (first_prompt, message_count, git_branch) = scan_session_metadata(&path);
-        let preview = first_prompt.unwrap_or_else(|| format!("Subagent {agent_id}"));
-        threads.push(json!({
-            "id": subagent_thread_id(parent_id, &agent_id),
-            "preview": preview,
-            "messageCount": message_count.unwrap_or(0),
-            "createdAt": file_mtime,
-            "updatedAt": file_mtime,
-            "cwd": cwd,
-            "gitBranch": git_branch,
-            "parentId": parent_id,
-        }));
+        files.push((agent_id, path, file_mtime));
     }
-    threads
+    files
+}
+
+fn build_subagent_thread(
+    parent_id: &str,
+    agent_id: &str,
+    cwd: &str,
+    path: &Path,
+    file_mtime: i64,
+) -> Value {
+    let (first_prompt, message_count, git_branch) = scan_session_metadata(path);
+    let preview = first_prompt.unwrap_or_else(|| format!("Subagent {agent_id}"));
+    json!({
+        "id": subagent_thread_id(parent_id, agent_id),
+        "preview": preview,
+        "messageCount": message_count.unwrap_or(0),
+        "createdAt": file_mtime,
+        "updatedAt": file_mtime,
+        "cwd": cwd,
+        "gitBranch": git_branch,
+        "parentId": parent_id,
+    })
+}
+
+fn list_subagent_threads(entry: &WorkspaceEntry, parent_id: &str, cwd: &str) -> Vec<Value> {
+    list_subagent_files(entry, parent_id)
+        .into_iter()
+        .map(|(agent_id, path, file_mtime)| {
+            build_subagent_thread(parent_id, &agent_id, cwd, &path, file_mtime)
+        })
+        .collect()
+}
+
+fn process_subagent_line(
+    workspace_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+    value: &Value,
+    event_sink: &TauriEventSink,
+    tool_names: &mut HashMap<String, String>,
+    tool_inputs: &mut HashMap<String, Value>,
+    tool_counter: &mut usize,
+) {
+    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if event_type != "user" && event_type != "assistant" {
+        return;
+    }
+
+    let message = value.get("message");
+    let content = message.map(normalize_message_content).unwrap_or_default();
+
+    if event_type == "user" {
+        if has_user_message_content(&content) {
+            let message_id = value
+                .get("uuid")
+                .and_then(|v| v.as_str())
+                .unwrap_or(thread_id);
+            emit_event(
+                event_sink,
+                workspace_id,
+                "item/completed",
+                json!({
+                    "threadId": thread_id,
+                    "item": {
+                        "id": message_id,
+                        "type": "userMessage",
+                        "content": content.clone(),
+                    }
+                }),
+            );
+        }
+
+        for entry in content.iter() {
+            if entry.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let tool_use_id = entry
+                .get("tool_use_id")
+                .or_else(|| entry.get("toolUseId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content_value = entry.get("content").cloned().unwrap_or(Value::Null);
+            let mut output = tool_result_output(&content_value);
+            if output.trim().is_empty() {
+                if let Some(fallback) = value
+                    .get("toolUseResult")
+                    .or_else(|| value.get("tool_use_result"))
+                {
+                    output = fallback
+                        .get("content")
+                        .map(tool_result_output)
+                        .unwrap_or_else(|| tool_result_output(fallback));
+                }
+            }
+            let command = tool_names
+                .get(tool_use_id)
+                .cloned()
+                .unwrap_or_else(|| "Tool".to_string());
+            let tool_input = tool_inputs
+                .get(tool_use_id)
+                .cloned()
+                .unwrap_or(Value::Null);
+            output = collapse_subagent_output(output, &command, &tool_input, value);
+            let item_id = if tool_use_id.is_empty() {
+                *tool_counter += 1;
+                format!("{turn_id}-tool-result-{}", *tool_counter)
+            } else {
+                tool_use_id.to_string()
+            };
+            emit_event(
+                event_sink,
+                workspace_id,
+                "item/completed",
+                json!({
+                    "threadId": thread_id,
+                    "item": {
+                        "id": item_id,
+                        "type": "commandExecution",
+                        "command": [command],
+                        "status": "completed",
+                        "aggregatedOutput": output,
+                        "toolInput": tool_input,
+                    }
+                }),
+            );
+        }
+        return;
+    }
+
+    let mut thinking_index = 0;
+    for entry in content.iter() {
+        match entry.get("type").and_then(|v| v.as_str()) {
+            Some("tool_use") => {
+                let tool_id = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let tool_name = entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Tool")
+                    .to_string();
+                let tool_input = entry.get("input").cloned().unwrap_or(Value::Null);
+                if !tool_id.is_empty() {
+                    tool_names.insert(tool_id.to_string(), tool_name.clone());
+                    tool_inputs.insert(tool_id.to_string(), tool_input.clone());
+                }
+                let item_id = if tool_id.is_empty() {
+                    *tool_counter += 1;
+                    format!("{turn_id}-tool-{}", *tool_counter)
+                } else {
+                    tool_id.to_string()
+                };
+                emit_event(
+                    event_sink,
+                    workspace_id,
+                    "item/started",
+                    json!({
+                        "threadId": thread_id,
+                        "item": {
+                            "id": item_id,
+                            "type": "commandExecution",
+                            "command": [tool_name],
+                            "status": "running",
+                            "toolInput": tool_input,
+                        }
+                    }),
+                );
+            }
+            Some("thinking") => {
+                if let Some(thinking) = entry.get("thinking").and_then(|v| v.as_str()) {
+                    let trimmed = thinking.trim();
+                    if !trimmed.is_empty() {
+                        let message_id = value
+                            .get("uuid")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(thread_id);
+                        let id = format!("{message_id}-thinking-{thinking_index}");
+                        thinking_index += 1;
+                        emit_event(
+                            event_sink,
+                            workspace_id,
+                            "item/completed",
+                            json!({
+                                "threadId": thread_id,
+                                "item": {
+                                    "id": id,
+                                    "type": "reasoning",
+                                    "summary": "",
+                                    "content": trimmed,
+                                }
+                            }),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let text = extract_text_from_content(&content).trim().to_string();
+    if !text.is_empty() {
+        let message_id = value
+            .get("uuid")
+            .and_then(|v| v.as_str())
+            .unwrap_or(thread_id);
+        emit_event(
+            event_sink,
+            workspace_id,
+            "item/completed",
+            json!({
+                "threadId": thread_id,
+                "item": {
+                    "id": message_id,
+                    "type": "agentMessage",
+                    "text": text,
+                }
+            }),
+        );
+    }
+}
+
+async fn tail_subagent_thread(
+    workspace_id: String,
+    thread_id: String,
+    path: PathBuf,
+    event_sink: TauriEventSink,
+    shutdown: watch::Receiver<bool>,
+) {
+    let turn_id = Uuid::new_v4().to_string();
+    emit_event(
+        &event_sink,
+        &workspace_id,
+        "turn/started",
+        json!({
+            "threadId": thread_id.clone(),
+            "turn": { "id": turn_id, "threadId": thread_id.clone() },
+        }),
+    );
+
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(_) => {
+            emit_event(
+                &event_sink,
+                &workspace_id,
+                "turn/completed",
+                json!({
+                    "threadId": thread_id.clone(),
+                    "turn": { "id": turn_id, "threadId": thread_id.clone() },
+                }),
+            );
+            return;
+        }
+    };
+    let mut reader = AsyncBufReader::new(file);
+    let mut line = String::new();
+    let mut tool_names: HashMap<String, String> = HashMap::new();
+    let mut tool_inputs: HashMap<String, Value> = HashMap::new();
+    let mut tool_counter: usize = 0;
+
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                sleep(Duration::from_millis(120)).await;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let value: Value = match serde_json::from_str(trimmed) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                process_subagent_line(
+                    &workspace_id,
+                    &thread_id,
+                    &turn_id,
+                    &value,
+                    &event_sink,
+                    &mut tool_names,
+                    &mut tool_inputs,
+                    &mut tool_counter,
+                );
+            }
+            Err(_) => break,
+        }
+    }
+
+    emit_event(
+        &event_sink,
+        &workspace_id,
+        "turn/completed",
+        json!({
+            "threadId": thread_id.clone(),
+            "turn": { "id": turn_id, "threadId": thread_id.clone() },
+        }),
+    );
+}
+
+async fn watch_workspace_threads(
+    workspace_id: String,
+    entry: WorkspaceEntry,
+    event_sink: TauriEventSink,
+    shutdown: watch::Receiver<bool>,
+) {
+    let mut known_sessions: HashSet<String> = HashSet::new();
+    let mut known_subagents: HashSet<String> = HashSet::new();
+    let mut active_subagents: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let cwd = entry.path.clone();
+
+    let initial_sessions = list_session_files(&entry);
+    for (session_id, _, _) in &initial_sessions {
+        known_sessions.insert(session_id.clone());
+    }
+    for (session_id, _, _) in &initial_sessions {
+        for (agent_id, _, _) in list_subagent_files(&entry, session_id) {
+            let thread_id = subagent_thread_id(session_id, &agent_id);
+            known_subagents.insert(thread_id);
+        }
+    }
+
+    let mut ticker = interval(Duration::from_millis(1000));
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+        ticker.tick().await;
+        let sessions = list_session_files(&entry);
+        for (session_id, path, file_mtime) in &sessions {
+            if known_sessions.insert(session_id.clone()) {
+                let (first_prompt, message_count, git_branch) = scan_session_metadata(path);
+                let thread = json!({
+                    "id": session_id,
+                    "preview": first_prompt.unwrap_or_default(),
+                    "messageCount": message_count.unwrap_or(0),
+                    "createdAt": *file_mtime,
+                    "updatedAt": *file_mtime,
+                    "cwd": cwd.clone(),
+                    "gitBranch": git_branch,
+                });
+                emit_event(
+                    &event_sink,
+                    &workspace_id,
+                    "thread/created",
+                    json!({ "thread": thread }),
+                );
+            }
+        }
+
+        for (session_id, _, _) in &sessions {
+            for (agent_id, path, file_mtime) in list_subagent_files(&entry, session_id) {
+                let thread_id = subagent_thread_id(session_id, &agent_id);
+                if known_subagents.insert(thread_id.clone()) {
+                    let thread =
+                        build_subagent_thread(session_id, &agent_id, &cwd, &path, file_mtime);
+                    emit_event(
+                        &event_sink,
+                        &workspace_id,
+                        "thread/created",
+                        json!({ "thread": thread }),
+                    );
+
+                    let handle = tokio::spawn(tail_subagent_thread(
+                        workspace_id.clone(),
+                        thread_id.clone(),
+                        path,
+                        event_sink.clone(),
+                        shutdown.clone(),
+                    ));
+                    active_subagents.insert(thread_id, handle);
+                }
+            }
+        }
+
+        active_subagents.retain(|_, handle| !handle.is_finished());
+    }
+
+    for (_, handle) in active_subagents {
+        let _ = handle.await;
+    }
 }
 
 fn session_sort_key(entry: &ClaudeSessionEntry) -> i64 {
@@ -1585,6 +2074,39 @@ fn tool_result_output(value: &Value) -> String {
         return String::new();
     }
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn extract_subagent_id(value: &Value) -> Option<String> {
+    value
+        .get("toolUseResult")
+        .or_else(|| value.get("tool_use_result"))
+        .and_then(|result| result.get("agentId"))
+        .and_then(|id| id.as_str())
+        .map(|id| id.to_string())
+}
+
+fn should_collapse_subagent_output(command: &str, tool_input: &Value, value: &Value) -> bool {
+    if command == "Task" {
+        return true;
+    }
+    tool_input.get("subagent_type").is_some()
+        || tool_input.get("subagentType").is_some()
+        || extract_subagent_id(value).is_some()
+}
+
+fn collapse_subagent_output(
+    output: String,
+    command: &str,
+    tool_input: &Value,
+    value: &Value,
+) -> String {
+    if !should_collapse_subagent_output(command, tool_input, value) {
+        return output;
+    }
+    let agent_label = extract_subagent_id(value)
+        .map(|id| format!("Subagent {id}"))
+        .unwrap_or_else(|| "Subagent".to_string());
+    format!("{agent_label} output is available in its thread.")
 }
 
 fn has_user_message_content(content: &[Value]) -> bool {

@@ -964,6 +964,23 @@ export function useThreads({
         );
         dispatch({ type: "setThreadPlan", threadId, plan: normalized });
       },
+      onThreadCreated: (workspaceId: string, thread: Record<string, unknown>) => {
+        const threadId = asString(thread?.id ?? "");
+        if (!threadId) {
+          return;
+        }
+        dispatch({ type: "ensureThread", workspaceId, threadId });
+        const parentId = asString(thread?.parentId ?? thread?.parent_id ?? "");
+        if (parentId) {
+          updateThreadParent(parentId, [threadId]);
+        }
+        const preview = asString(thread?.preview ?? "").trim();
+        const customName = getCustomName(workspaceId, threadId);
+        if (!customName && preview) {
+          const name = preview.length > 38 ? `${preview.slice(0, 38)}…` : preview;
+          dispatch({ type: "setThreadName", workspaceId, threadId, name });
+        }
+      },
       onThreadTokenUsageUpdated: (
         workspaceId: string,
         threadId: string,
@@ -1020,6 +1037,7 @@ export function useThreads({
       markProcessing,
       onDebug,
       recordThreadActivity,
+      updateThreadParent,
       pushThreadErrorMessage,
       safeMessageActivity,
     ],

@@ -9,7 +9,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use uuid::Uuid;
 
-use crate::claude::spawn_workspace_session;
+use crate::claude::{
+    ensure_workspace_thread_watcher, spawn_workspace_session, stop_workspace_thread_watcher,
+};
 use crate::backend::events::{AppServerEvent, EventSink};
 use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
@@ -471,6 +473,8 @@ pub(crate) async fn add_workspace(
         .await
         .insert(entry.id.clone(), session);
 
+    ensure_workspace_thread_watcher(&entry.id, entry.clone(), &state, app).await;
+
     Ok(WorkspaceInfo {
         id: entry.id,
         name: entry.name,
@@ -490,7 +494,7 @@ pub(crate) async fn add_clone(
     copy_name: String,
     copies_folder: String,
     state: State<'_, AppState>,
-    _app: AppHandle,
+    app: AppHandle,
 ) -> Result<WorkspaceInfo, String> {
     let copy_name = copy_name.trim().to_string();
     if copy_name.is_empty() {
@@ -593,6 +597,8 @@ pub(crate) async fn add_clone(
         .await
         .insert(entry.id.clone(), session);
 
+    ensure_workspace_thread_watcher(&entry.id, entry.clone(), &state, app).await;
+
     Ok(WorkspaceInfo {
         id: entry.id,
         name: entry.name,
@@ -688,6 +694,8 @@ pub(crate) async fn add_worktree(
         .await
         .insert(entry.id.clone(), session);
 
+    ensure_workspace_thread_watcher(&entry.id, entry.clone(), &state, app).await;
+
     Ok(WorkspaceInfo {
         id: entry.id,
         name: entry.name,
@@ -722,6 +730,11 @@ pub(crate) async fn remove_workspace(
             .collect::<Vec<_>>();
         (entry, children)
     };
+
+    stop_workspace_thread_watcher(&id, &state).await;
+    for child in &child_worktrees {
+        stop_workspace_thread_watcher(&child.id, &state).await;
+    }
 
     let parent_path = PathBuf::from(&entry.path);
     for child in &child_worktrees {
@@ -776,6 +789,8 @@ pub(crate) async fn remove_worktree(
             .ok_or("worktree parent not found")?;
         (entry, parent)
     };
+
+    stop_workspace_thread_watcher(&entry.id, &state).await;
 
     let _ = state.sessions.lock().await.remove(&entry.id);
 
@@ -944,6 +959,13 @@ pub(crate) async fn rename_worktree(
                     .lock()
                     .await
                     .insert(entry_snapshot.id.clone(), session);
+                ensure_workspace_thread_watcher(
+                    &entry_snapshot.id,
+                    entry_snapshot.clone(),
+                    &state,
+                    app.clone(),
+                )
+                .await;
             }
             Err(error) => {
                 eprintln!(
@@ -1285,6 +1307,7 @@ pub(crate) async fn connect_workspace(
     };
     let session = spawn_workspace_session(entry.clone(), default_bin).await?;
     state.sessions.lock().await.insert(entry.id.clone(), session);
+    ensure_workspace_thread_watcher(&entry.id, entry.clone(), &state, app.clone()).await;
     let event_sink = TauriEventSink::new(app.clone());
     event_sink.emit_app_server_event(AppServerEvent {
         workspace_id: entry.id,
