@@ -780,10 +780,12 @@ async fn run_claude_turn(
     let mut full_text = String::new();
     let mut last_text = String::new();
     let mut last_usage: Option<Value> = None;
+    let mut last_model_usage: Option<Value> = None;
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_counter: usize = 0;
     let mut subagent_tool_ids: HashSet<String> = HashSet::new();
+    let mut active_subagent_tasks: usize = 0;
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
             continue;
@@ -823,8 +825,12 @@ async fn run_claude_turn(
                                 subagent_tool_ids.insert(tool_id.to_string());
                             }
                         }
-                        if is_subagent_tool {
+                        // Skip tools invoked by subagents (nested inside Task execution)
+                        if active_subagent_tasks > 0 && !is_subagent_tool {
                             continue;
+                        }
+                        if is_subagent_tool {
+                            active_subagent_tasks += 1;
                         }
                         let item_id = if tool_id.is_empty() {
                             tool_counter += 1;
@@ -908,14 +914,20 @@ async fn run_claude_turn(
                             .get(tool_use_id)
                             .cloned()
                             .unwrap_or(Value::Null);
-                        if is_subagent_tool_result(
+                        let is_subagent_result = is_subagent_tool_result(
                             &command,
                             &tool_input,
                             &value,
                             &subagent_tool_ids,
                             tool_use_id,
-                        ) {
+                        );
+                        // Skip tool results from inside subagents (but not the Task result itself)
+                        if active_subagent_tasks > 0 && !is_subagent_result {
                             continue;
+                        }
+                        if is_subagent_result {
+                            // Task tool completed, decrement active count
+                            active_subagent_tasks = active_subagent_tasks.saturating_sub(1);
                         }
                         output = collapse_subagent_output(output, &command, &tool_input, &value);
                         let item_id = if tool_use_id.is_empty() {
@@ -944,8 +956,14 @@ async fn run_claude_turn(
                 }
             }
         } else if event_type == "result" {
+            eprintln!("[DEBUG] Got result event");
             if let Some(usage) = value.get("usage") {
+                eprintln!("[DEBUG] Found usage in result: {:?}", usage);
                 last_usage = Some(usage.clone());
+            }
+            if let Some(model_usage) = value.get("modelUsage") {
+                eprintln!("[DEBUG] Found modelUsage in result: {:?}", model_usage);
+                last_model_usage = Some(model_usage.clone());
             }
         }
     }
@@ -980,7 +998,9 @@ async fn run_claude_turn(
         });
     }
 
-    if let Some(usage) = last_usage.and_then(format_token_usage) {
+    eprintln!("[DEBUG] End of turn - last_usage: {:?}, last_model_usage: {:?}", last_usage.is_some(), last_model_usage.is_some());
+    if let Some(usage) = last_usage.and_then(|u| format_token_usage(u, last_model_usage.as_ref())) {
+        eprintln!("[DEBUG] Emitting tokenUsage: {:?}", usage);
         emit_event(
             &event_sink,
             workspace_id,
@@ -990,6 +1010,8 @@ async fn run_claude_turn(
                 "tokenUsage": usage,
             }),
         );
+    } else {
+        eprintln!("[DEBUG] No token usage to emit - format_token_usage returned None");
     }
 
     emit_event(
@@ -2171,8 +2193,11 @@ fn has_user_message_content(content: &[Value]) -> bool {
     })
 }
 
-fn format_token_usage(raw: Value) -> Option<Value> {
+fn format_token_usage(raw: Value, model_usage: Option<&Value>) -> Option<Value> {
+    eprintln!("[DEBUG] format_token_usage called with raw: {:?}", raw);
+    eprintln!("[DEBUG] model_usage: {:?}", model_usage);
     let Value::Object(map) = raw else {
+        eprintln!("[DEBUG] raw is not an object, returning None");
         return None;
     };
     let input_tokens = usage_number(&map, &["input_tokens", "inputTokens"]);
@@ -2184,6 +2209,14 @@ fn format_token_usage(raw: Value) -> Option<Value> {
     let reasoning_output_tokens =
         usage_number(&map, &["reasoning_output_tokens", "reasoningOutputTokens"]);
     let total_tokens = input_tokens + output_tokens + cached_input_tokens;
+
+    // Extract modelContextWindow from modelUsage (first model's contextWindow)
+    let model_context_window = model_usage
+        .and_then(|mu| mu.as_object())
+        .and_then(|obj| obj.values().next())
+        .and_then(|model_data| model_data.get("contextWindow"))
+        .and_then(|cw| cw.as_i64());
+
     Some(json!({
         "total": {
             "totalTokens": total_tokens,
@@ -2198,7 +2231,8 @@ fn format_token_usage(raw: Value) -> Option<Value> {
             "cachedInputTokens": cached_input_tokens,
             "outputTokens": output_tokens,
             "reasoningOutputTokens": reasoning_output_tokens,
-        }
+        },
+        "modelContextWindow": model_context_window
     }))
 }
 

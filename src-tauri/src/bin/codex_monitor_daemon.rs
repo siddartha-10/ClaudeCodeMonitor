@@ -1166,6 +1166,7 @@ async fn run_claude_turn(
     let mut full_text = String::new();
     let mut last_text = String::new();
     let mut last_usage: Option<Value> = None;
+    let mut last_model_usage: Option<Value> = None;
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_counter: usize = 0;
@@ -1315,6 +1316,9 @@ async fn run_claude_turn(
             if let Some(usage) = value.get("usage") {
                 last_usage = Some(usage.clone());
             }
+            if let Some(model_usage) = value.get("modelUsage") {
+                last_model_usage = Some(model_usage.clone());
+            }
         }
     }
 
@@ -1347,7 +1351,7 @@ async fn run_claude_turn(
         });
     }
 
-    if let Some(usage) = last_usage.and_then(format_token_usage) {
+    if let Some(usage) = last_usage.and_then(|u| format_token_usage(u, last_model_usage.as_ref())) {
         emit_event(
             event_sink,
             workspace_id,
@@ -1973,7 +1977,7 @@ fn has_user_message_content(content: &[Value]) -> bool {
     })
 }
 
-fn format_token_usage(raw: Value) -> Option<Value> {
+fn format_token_usage(raw: Value, model_usage: Option<&Value>) -> Option<Value> {
     let Value::Object(map) = raw else {
         return None;
     };
@@ -1986,6 +1990,14 @@ fn format_token_usage(raw: Value) -> Option<Value> {
     let reasoning_output_tokens =
         usage_number(&map, &["reasoning_output_tokens", "reasoningOutputTokens"]);
     let total_tokens = input_tokens + output_tokens + cached_input_tokens;
+
+    // Extract modelContextWindow from modelUsage (first model's contextWindow)
+    let model_context_window = model_usage
+        .and_then(|mu| mu.as_object())
+        .and_then(|obj| obj.values().next())
+        .and_then(|model_data| model_data.get("contextWindow"))
+        .and_then(|cw| cw.as_i64());
+
     Some(json!({
         "total": {
             "totalTokens": total_tokens,
@@ -2000,7 +2012,8 @@ fn format_token_usage(raw: Value) -> Option<Value> {
             "cachedInputTokens": cached_input_tokens,
             "outputTokens": output_tokens,
             "reasoningOutputTokens": reasoning_output_tokens,
-        }
+        },
+        "modelContextWindow": model_context_window
     }))
 }
 

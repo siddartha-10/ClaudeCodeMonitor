@@ -4,7 +4,6 @@ const MAX_ITEMS_PER_THREAD = 200;
 const MAX_ITEM_TEXT = 20000;
 const TOOL_OUTPUT_RECENT_ITEMS = 40;
 const NO_TRUNCATE_TOOL_TYPES = new Set(["fileChange", "commandExecution"]);
-const SUBAGENT_THREAD_MARKER = "::subagent::";
 
 function asString(value: unknown) {
   return typeof value === "string" ? value : value ? String(value) : "";
@@ -33,47 +32,13 @@ function asRecord(value: unknown) {
   return value as Record<string, unknown>;
 }
 
-function isSubagentThreadId(threadId: string) {
-  return threadId.includes(SUBAGENT_THREAD_MARKER);
-}
-
-function isSubagentTaskItem(item: Record<string, unknown>) {
-  if (asString(item.type) !== "commandExecution") {
-    return false;
-  }
-  const command = Array.isArray(item.command)
-    ? item.command.map((part) => asString(part)).join(" ")
-    : asString(item.command ?? "");
-  const toolInput = asRecord(item.toolInput ?? item.tool_input ?? null);
-  const hasSubagentInput = Boolean(
-    toolInput?.subagent_type ?? toolInput?.subagentType,
-  );
-  return hasSubagentInput || command === "Task";
-}
-
 export function shouldHideSubagentToolItem(
-  threadId: string,
-  item: Record<string, unknown>,
+  _threadId: string,
+  _item: Record<string, unknown>,
 ) {
-  if (!threadId || isSubagentThreadId(threadId)) {
-    return false;
-  }
-  return isSubagentTaskItem(item);
-}
-
-function isSubagentToolConversationItem(item: ConversationItem) {
-  if (item.kind !== "tool" || item.toolType !== "commandExecution") {
-    return false;
-  }
-  const toolInput = item.toolInput ?? null;
-  if (toolInput?.subagent_type || toolInput?.subagentType) {
-    return true;
-  }
-  const title = item.title ?? "";
-  const command = title.startsWith("Command: ")
-    ? title.slice("Command: ".length)
-    : title;
-  return command.trim().toLowerCase() === "task";
+  // Backend now handles filtering of nested subagent tools
+  // Task tools should be shown in main thread to indicate subagent was spawned
+  return false;
 }
 
 function formatCollabAgentStates(value: unknown) {
@@ -133,12 +98,10 @@ export function normalizeItem(item: ConversationItem): ConversationItem {
   return item;
 }
 
-export function prepareThreadItems(items: ConversationItem[], threadId?: string) {
-  const filtered =
-    threadId && !isSubagentThreadId(threadId)
-      ? items.filter((item) => !isSubagentToolConversationItem(item))
-      : items;
-  const normalized = filtered.map((item) => normalizeItem(item));
+export function prepareThreadItems(items: ConversationItem[], _threadId?: string) {
+  // Backend now handles filtering of nested subagent tools
+  // Task tools should be shown in main thread to indicate subagent was spawned
+  const normalized = items.map((item) => normalizeItem(item));
   const limited =
     normalized.length > MAX_ITEMS_PER_THREAD
       ? normalized.slice(-MAX_ITEMS_PER_THREAD)
