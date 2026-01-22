@@ -20,7 +20,7 @@
   --text-faint: rgba(255, 255, 255, 0.5);
   --text-fainter: rgba(255, 255, 255, 0.45);
   --text-dim: rgba(255, 255, 255, 0.35);
-  --surface-sidebar: rgba(18, 18, 18, 0.35);
+  --surface-sidebar: rgba(18, 18, 18, 0.5);
   --surface-topbar: rgba(10, 14, 20, 0.45);
   --surface-right-panel: rgba(9, 12, 20, 0.4);
   --surface-composer: rgba(10, 14, 20, 0.45);

@@ -79,6 +79,7 @@ import { useAppMenuEvents } from "./features/app/hooks/useAppMenuEvents";
 import { useWorkspaceActions } from "./features/app/hooks/useWorkspaceActions";
 import { useWorkspaceCycling } from "./features/app/hooks/useWorkspaceCycling";
 import { useThreadRows } from "./features/app/hooks/useThreadRows";
+import { useLiquidGlassEffect } from "./features/app/hooks/useLiquidGlassEffect";
 import { useCopyThread } from "./features/threads/hooks/useCopyThread";
 import { useTerminalController } from "./features/terminal/hooks/useTerminalController";
 import { useGitCommitController } from "./features/app/hooks/useGitCommitController";
@@ -143,6 +144,7 @@ function MainApp() {
     handleCopyDebug,
     clearDebugEntries,
   } = useDebugLog();
+  useLiquidGlassEffect({ reduceTransparency, onDebug: addDebugEntry });
   const [accessMode, setAccessMode] = useState<AccessMode>("current");
   const [activeTab, setActiveTab] = useState<
     "projects" | "codex" | "git" | "log"
