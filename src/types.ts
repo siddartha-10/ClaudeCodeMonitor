@@ -132,6 +132,16 @@ export type ApprovalRequest = {
   params: Record<string, unknown>;
 };
 
+export type PermissionDenial = {
+  id: string;
+  workspace_id: string;
+  thread_id: string;
+  turn_id: string;
+  tool_name: string;
+  tool_use_id?: string | null;
+  tool_input?: Record<string, unknown> | null;
+};
+
 export type GitFileStatus = {
   path: string;
   status: string;

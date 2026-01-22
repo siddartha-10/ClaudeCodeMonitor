@@ -35,6 +35,7 @@ import type {
   GitLogEntry,
   LocalUsageSnapshot,
   ModelOption,
+  PermissionDenial,
   QueuedMessage,
   RateLimitSnapshot,
   SkillOption,
@@ -101,6 +102,7 @@ type LayoutNodesOptions = {
   activeItems: ConversationItem[];
   activeRateLimits: RateLimitSnapshot | null;
   approvals: ApprovalRequest[];
+  permissionDenials: PermissionDenial[];
   handleApprovalDecision: (
     request: ApprovalRequest,
     decision: "accept" | "decline",
@@ -109,6 +111,11 @@ type LayoutNodesOptions = {
     request: ApprovalRequest,
     ruleInfo: ApprovalRuleInfo,
   ) => void;
+  handlePermissionRemember: (
+    denial: PermissionDenial,
+    ruleInfo: ApprovalRuleInfo,
+  ) => void;
+  handlePermissionDismiss: (denial: PermissionDenial) => void;
   onOpenSettings: () => void;
   onOpenDictationSettings?: () => void;
   onOpenDebug: () => void;
@@ -503,9 +510,12 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
   const approvalToastsNode = (
     <ApprovalToasts
       approvals={options.approvals}
+      permissionDenials={options.permissionDenials}
       workspaces={options.workspaces}
       onDecision={options.handleApprovalDecision}
       onRemember={options.handleApprovalRemember}
+      onPermissionRemember={options.handlePermissionRemember}
+      onPermissionDismiss={options.handlePermissionDismiss}
     />
   );
 

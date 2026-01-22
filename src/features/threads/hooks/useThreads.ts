@@ -6,6 +6,7 @@ import type {
   ConversationItem,
   CustomPromptOption,
   DebugEntry,
+  PermissionDenial,
   RateLimitSnapshot,
   ThreadSummary,
   ThreadTokenUsage,
@@ -809,6 +810,11 @@ export function useThreads({
           return;
         }
         dispatch({ type: "addApproval", approval });
+      },
+      onPermissionDenied: ({ denials }: { denials: PermissionDenial[] }) => {
+        if (denials.length) {
+          dispatch({ type: "addPermissionDenials", denials });
+        }
       },
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
@@ -1919,6 +1925,33 @@ export function useThreads({
     [onDebug, rememberApprovalPrefix],
   );
 
+  const handlePermissionRemember = useCallback(
+    async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
+      try {
+        await rememberApprovalRule(denial.workspace_id, ruleInfo.rule);
+      } catch (error) {
+        onDebug?.({
+          id: `${Date.now()}-client-permission-rule-error`,
+          timestamp: Date.now(),
+          source: "error",
+          label: "permission rule error",
+          payload: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      if (ruleInfo.commandTokens) {
+        rememberApprovalPrefix(denial.workspace_id, ruleInfo.commandTokens);
+      }
+
+      dispatch({ type: "removePermissionDenial", denialId: denial.id });
+    },
+    [onDebug, rememberApprovalPrefix],
+  );
+
+  const handlePermissionDismiss = useCallback((denial: PermissionDenial) => {
+    dispatch({ type: "removePermissionDenial", denialId: denial.id });
+  }, []);
+
   const setActiveThreadId = useCallback(
     (threadId: string | null, workspaceId?: string) => {
       const targetId = workspaceId ?? activeWorkspaceId;
@@ -1982,6 +2015,7 @@ export function useThreads({
     setActiveThreadId,
     activeItems,
     approvals: state.approvals,
+    permissionDenials: state.permissionDenials,
     threadsByWorkspace: state.threadsByWorkspace,
     threadParentById: state.threadParentById,
     threadStatusById: state.threadStatusById,
@@ -2012,5 +2046,7 @@ export function useThreads({
     startReview,
     handleApprovalDecision,
     handleApprovalRemember,
+    handlePermissionRemember,
+    handlePermissionDismiss,
   };
 }

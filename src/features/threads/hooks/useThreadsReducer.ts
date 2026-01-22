@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ConversationItem,
+  PermissionDenial,
   RateLimitSnapshot,
   ThreadSummary,
   ThreadTokenUsage,
@@ -116,6 +117,7 @@ export type ThreadState = {
   threadListCursorByWorkspace: Record<string, string | null>;
   activeTurnIdByThread: Record<string, string | null>;
   approvals: ApprovalRequest[];
+  permissionDenials: PermissionDenial[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
   rateLimitsByWorkspace: Record<string, RateLimitSnapshot | null>;
   planByThread: Record<string, TurnPlan | null>;
@@ -191,6 +193,8 @@ export type ThreadAction =
     }
   | { type: "addApproval"; approval: ApprovalRequest }
   | { type: "removeApproval"; requestId: number; workspaceId: string }
+  | { type: "addPermissionDenials"; denials: PermissionDenial[] }
+  | { type: "removePermissionDenial"; denialId: string }
   | { type: "setThreadTokenUsage"; threadId: string; tokenUsage: ThreadTokenUsage }
   | {
       type: "setRateLimits";
@@ -220,6 +224,7 @@ export const initialState: ThreadState = {
   threadListCursorByWorkspace: {},
   activeTurnIdByThread: {},
   approvals: [],
+  permissionDenials: [],
   tokenUsageByThread: {},
   rateLimitsByWorkspace: {},
   planByThread: {},
@@ -810,6 +815,34 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             item.workspace_id !== action.workspaceId,
         ),
       };
+    case "addPermissionDenials": {
+      if (!action.denials.length) {
+        return state;
+      }
+      const existingIds = new Set(state.permissionDenials.map((item) => item.id));
+      const additions = action.denials.filter(
+        (denial) => !existingIds.has(denial.id),
+      );
+      if (!additions.length) {
+        return state;
+      }
+      return {
+        ...state,
+        permissionDenials: [...state.permissionDenials, ...additions],
+      };
+    }
+    case "removePermissionDenial": {
+      const filtered = state.permissionDenials.filter(
+        (item) => item.id !== action.denialId,
+      );
+      if (filtered.length === state.permissionDenials.length) {
+        return state;
+      }
+      return {
+        ...state,
+        permissionDenials: filtered,
+      };
+    }
     case "setThreads": {
       return {
         ...state,

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { AppServerEvent, ApprovalRequest } from "../../../types";
+import type { AppServerEvent, ApprovalRequest, PermissionDenial } from "../../../types";
 import { subscribeAppServerEvents } from "../../../services/events";
 
 type AgentDelta = {
@@ -20,6 +20,12 @@ type AgentCompleted = {
 type AppServerEventHandlers = {
   onWorkspaceConnected?: (workspaceId: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
+  onPermissionDenied?: (event: {
+    workspaceId: string;
+    threadId: string;
+    turnId: string;
+    denials: PermissionDenial[];
+  }) => void;
   onAgentMessageDelta?: (event: AgentDelta) => void;
   onAgentMessageCompleted?: (event: AgentCompleted) => void;
   onAppServerEvent?: (event: AppServerEvent) => void;
@@ -139,6 +145,64 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
         const turnId = String(turn?.id ?? params.turnId ?? params.turn_id ?? "");
         if (threadId) {
           handlers.onTurnCompleted?.(workspace_id, threadId, turnId);
+        }
+        return;
+      }
+
+      if (method === "turn/permissionDenied") {
+        const params = message.params as Record<string, unknown>;
+        const threadId = String(params.threadId ?? params.thread_id ?? "");
+        const turnId = String(params.turnId ?? params.turn_id ?? "");
+        const rawDenials =
+          (params.permissionDenials as unknown[] | undefined) ??
+          (params.permission_denials as unknown[] | undefined) ??
+          [];
+        if (threadId && rawDenials.length) {
+          const denials = rawDenials
+            .map((entry, index) => {
+              if (!entry || typeof entry !== "object") {
+                return null;
+              }
+              const record = entry as Record<string, unknown>;
+              const toolName = String(
+                record.toolName ?? record.tool_name ?? "",
+              ).trim();
+              if (!toolName) {
+                return null;
+              }
+              const toolUseId =
+                typeof record.toolUseId === "string"
+                  ? record.toolUseId
+                  : typeof record.tool_use_id === "string"
+                    ? record.tool_use_id
+                    : null;
+              const toolInputValue =
+                record.toolInput ?? record.tool_input ?? null;
+              const toolInput =
+                toolInputValue && typeof toolInputValue === "object"
+                  ? (toolInputValue as Record<string, unknown>)
+                  : null;
+              const id = toolUseId || `${threadId}-${toolName}-${index}`;
+              const denial: PermissionDenial = {
+                id,
+                workspace_id: workspace_id,
+                thread_id: threadId,
+                turn_id: turnId,
+                tool_name: toolName,
+                tool_use_id: toolUseId,
+                tool_input: toolInput,
+              };
+              return denial;
+            })
+            .filter((item): item is PermissionDenial => Boolean(item));
+          if (denials.length) {
+            handlers.onPermissionDenied?.({
+              workspaceId: workspace_id,
+              threadId,
+              turnId,
+              denials,
+            });
+          }
         }
         return;
       }

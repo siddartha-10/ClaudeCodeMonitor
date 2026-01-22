@@ -657,6 +657,7 @@ Changes:\n{diff}"
         default_bin,
         prompt,
         Some("dontAsk".to_string()),
+        Some("haiku".to_string()),
     )
     .await?;
 
@@ -783,6 +784,7 @@ async fn run_claude_turn(
     let mut tool_counter: usize = 0;
     let mut thinking_counter: usize = 0;
     let mut subagent_tool_ids: HashSet<String> = HashSet::new();
+    let mut permission_denials_emitted = false;
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
             continue;
@@ -971,6 +973,58 @@ async fn run_claude_turn(
             if let Some(model_usage) = value.get("modelUsage") {
                 last_model_usage = Some(model_usage.clone());
             }
+            if !permission_denials_emitted {
+                let denials = value
+                    .get("permission_denials")
+                    .or_else(|| value.get("permissionDenials"))
+                    .and_then(|item| item.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|entry| {
+                                let tool_name = entry
+                                    .get("tool_name")
+                                    .or_else(|| entry.get("toolName"))
+                                    .and_then(|item| item.as_str())?
+                                    .trim()
+                                    .to_string();
+                                if tool_name.is_empty() {
+                                    return None;
+                                }
+                                let tool_use_id = entry
+                                    .get("tool_use_id")
+                                    .or_else(|| entry.get("toolUseId"))
+                                    .and_then(|item| item.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_input = entry
+                                    .get("tool_input")
+                                    .or_else(|| entry.get("toolInput"))
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                Some(json!({
+                                    "toolName": tool_name,
+                                    "toolUseId": tool_use_id,
+                                    "toolInput": tool_input,
+                                }))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !denials.is_empty() {
+                    permission_denials_emitted = true;
+                    emit_event(
+                        &event_sink,
+                        workspace_id,
+                        "turn/permissionDenied",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "permissionDenials": denials,
+                        }),
+                    );
+                }
+            }
         }
     }
 
@@ -1052,6 +1106,7 @@ async fn run_claude_prompt_once(
     claude_bin: Option<String>,
     prompt: String,
     permission_mode: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
     let mut command = build_claude_command_with_bin(claude_bin);
     command.current_dir(cwd);
@@ -1061,6 +1116,9 @@ async fn run_claude_prompt_once(
     command.arg("--no-session-persistence");
     if let Some(mode) = permission_mode {
         command.arg("--permission-mode").arg(mode);
+    }
+    if let Some(m) = model {
+        command.arg("--model").arg(m);
     }
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
