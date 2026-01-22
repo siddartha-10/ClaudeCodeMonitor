@@ -32,6 +32,7 @@ type ToolSummary = {
   value?: string;
   detail?: string;
   output?: string;
+  badges?: { label: string; title?: string }[];
 };
 
 type StatusTone = "completed" | "processing" | "failed" | "unknown";
@@ -131,6 +132,18 @@ function normalizeToolInput(value: unknown) {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function formatModelLabel(model: string) {
+  return model.replace(/^claude-/, "").trim();
+}
+
+function isJsonLike(value: string) {
+  const trimmed = value.trim();
+  return (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  );
 }
 
 function buildPathSummary(path: string) {
@@ -301,10 +314,14 @@ function buildToolSummary(
       if (toolName === "task") {
         const description = firstStringField(toolInput, ["description", "prompt"]);
         const subagent = firstStringField(toolInput, ["subagent_type", "subagentType"]);
+        const badges = subagent
+          ? [{ label: `Subagent ${subagent}`, title: `Subagent: ${subagent}` }]
+          : undefined;
         return {
           label: "task",
           value: description || "task",
-          detail: subagent,
+          detail: subagent ? "" : subagent,
+          badges,
         };
       }
       if (toolName === "todowrite") {
@@ -343,11 +360,18 @@ function buildToolSummary(
   if (item.toolType === "mcpToolCall") {
     const toolName = toolNameFromTitle(item.title);
     const args = parseToolArgs(item.detail);
+    const output = item.output ?? "";
+    const badges = [{ label: "MCP" }].concat(
+      output && isJsonLike(output) ? [{ label: "JSON" }] : [],
+    );
     if (toolName.toLowerCase().includes("search")) {
       return {
         label: "searched",
         value:
           firstStringField(args, ["query", "pattern", "text"]) || item.detail,
+        detail: item.detail || "",
+        output,
+        badges,
       };
     }
     if (toolName.toLowerCase().includes("read")) {
@@ -357,6 +381,8 @@ function buildToolSummary(
         label: "read",
         value: basename(targetPath),
         detail: targetPath && targetPath !== basename(targetPath) ? targetPath : "",
+        output,
+        badges,
       };
     }
     if (toolName) {
@@ -364,6 +390,8 @@ function buildToolSummary(
         label: "tool",
         value: toolName,
         detail: item.detail || "",
+        output,
+        badges,
       };
     }
   }
@@ -541,27 +569,37 @@ const MessageRow = memo(function MessageRow({
   onOpenFileLink,
   onOpenFileLinkMenu,
 }: MessageRowProps) {
+  const modelLabel = item.model ? formatModelLabel(item.model) : "";
   return (
     <div className={`message ${item.role}`}>
-      <div className="bubble message-bubble">
-        <Markdown
-          value={item.text}
-          className="markdown"
-          onOpenFileLink={onOpenFileLink}
-          onOpenFileLinkMenu={onOpenFileLinkMenu}
-        />
-        <button
-          type="button"
-          className={`ghost message-copy-button${isCopied ? " is-copied" : ""}`}
-          onClick={() => onCopy(item)}
-          aria-label="Copy message"
-          title="Copy message"
-        >
-          <span className="message-copy-icon" aria-hidden>
-            <Copy className="message-copy-icon-copy" size={14} />
-            <Check className="message-copy-icon-check" size={14} />
-          </span>
-        </button>
+      <div className="message-stack">
+        {item.role === "assistant" && item.model && (
+          <div className="message-meta">
+            <span className="message-badge" title={item.model}>
+              Model {modelLabel || item.model}
+            </span>
+          </div>
+        )}
+        <div className="bubble message-bubble">
+          <Markdown
+            value={item.text}
+            className="markdown"
+            onOpenFileLink={onOpenFileLink}
+            onOpenFileLinkMenu={onOpenFileLinkMenu}
+          />
+          <button
+            type="button"
+            className={`ghost message-copy-button${isCopied ? " is-copied" : ""}`}
+            onClick={() => onCopy(item)}
+            aria-label="Copy message"
+            title="Copy message"
+          >
+            <span className="message-copy-icon" aria-hidden>
+              <Copy className="message-copy-icon-copy" size={14} />
+              <Check className="message-copy-icon-check" size={14} />
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -696,6 +734,7 @@ const ToolRow = memo(function ToolRow({
   const hasChanges = changeNames.length > 0;
   const tone = toolStatusTone(item, hasChanges);
   const ToolIcon = toolIconForSummary(item, summary);
+  const summaryBadges = summary.badges ?? [];
   const summaryLabel = isFileChange
     ? changeNames.length > 1
       ? "files edited"
@@ -750,6 +789,19 @@ const ToolRow = memo(function ToolRow({
               ) : (
                 summaryValue
               )}
+            </span>
+          )}
+          {summaryBadges.length > 0 && (
+            <span className="tool-inline-badges">
+              {summaryBadges.map((badge, index) => (
+                <span
+                  key={`${item.id}-badge-${index}`}
+                  className="tool-inline-badge"
+                  title={badge.title ?? badge.label}
+                >
+                  {badge.label}
+                </span>
+              ))}
             </span>
           )}
         </button>

@@ -573,16 +573,12 @@ Changes:\n{diff}"
 #[tauri::command]
 pub(crate) async fn remember_approval_rule(
     workspace_id: String,
-    command: Vec<String>,
+    rule: String,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let command = command
-        .into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect::<Vec<_>>();
-    if command.is_empty() {
-        return Err("empty command".to_string());
+    let rule = rule.trim();
+    if rule.is_empty() {
+        return Err("empty rule".to_string());
     }
 
     let (entry, parent_path) = {
@@ -600,7 +596,6 @@ pub(crate) async fn remember_approval_rule(
     };
 
     let settings_path = resolve_permissions_path(&entry, parent_path.as_deref())?;
-    let rule = format_permission_rule(&command);
     let mut settings = read_settings_json(&settings_path)?;
     let permissions = settings
         .entry("permissions")
@@ -612,8 +607,8 @@ pub(crate) async fn remember_approval_rule(
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or("Unable to update permissions".to_string())?;
-    if !allow.iter().any(|item| item.as_str() == Some(&rule)) {
-        allow.push(Value::String(rule));
+    if !allow.iter().any(|item| item.as_str() == Some(rule)) {
+        allow.push(Value::String(rule.to_string()));
     }
     write_settings_json(&settings_path, &settings)?;
 
@@ -662,6 +657,7 @@ Changes:\n{diff}"
         default_bin,
         prompt,
         Some("dontAsk".to_string()),
+        Some("haiku".to_string()),
     )
     .await?;
 
@@ -782,11 +778,13 @@ async fn run_claude_turn(
     let mut last_text = String::new();
     let mut last_usage: Option<Value> = None;
     let mut last_model_usage: Option<Value> = None;
+    let mut last_model: Option<String> = None;
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_counter: usize = 0;
     let mut thinking_counter: usize = 0;
     let mut subagent_tool_ids: HashSet<String> = HashSet::new();
+    let mut permission_denials_emitted = false;
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
             continue;
@@ -807,6 +805,11 @@ async fn run_claude_turn(
                 }
             }
             if let Some(message) = value.get("message") {
+                if let Some(model) = message.get("model").and_then(|v| v.as_str()) {
+                    if !model.trim().is_empty() {
+                        last_model = Some(model.to_string());
+                    }
+                }
                 if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
                     for entry in content {
                         let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -970,6 +973,58 @@ async fn run_claude_turn(
             if let Some(model_usage) = value.get("modelUsage") {
                 last_model_usage = Some(model_usage.clone());
             }
+            if !permission_denials_emitted {
+                let denials = value
+                    .get("permission_denials")
+                    .or_else(|| value.get("permissionDenials"))
+                    .and_then(|item| item.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|entry| {
+                                let tool_name = entry
+                                    .get("tool_name")
+                                    .or_else(|| entry.get("toolName"))
+                                    .and_then(|item| item.as_str())?
+                                    .trim()
+                                    .to_string();
+                                if tool_name.is_empty() {
+                                    return None;
+                                }
+                                let tool_use_id = entry
+                                    .get("tool_use_id")
+                                    .or_else(|| entry.get("toolUseId"))
+                                    .and_then(|item| item.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_input = entry
+                                    .get("tool_input")
+                                    .or_else(|| entry.get("toolInput"))
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                Some(json!({
+                                    "toolName": tool_name,
+                                    "toolUseId": tool_use_id,
+                                    "toolInput": tool_input,
+                                }))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !denials.is_empty() {
+                    permission_denials_emitted = true;
+                    emit_event(
+                        &event_sink,
+                        workspace_id,
+                        "turn/permissionDenied",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "permissionDenials": denials,
+                        }),
+                    );
+                }
+            }
         }
     }
 
@@ -1021,7 +1076,12 @@ async fn run_claude_turn(
         "item/completed",
         json!({
             "threadId": thread_id,
-            "item": { "id": item_id, "type": "agentMessage", "text": full_text },
+            "item": {
+                "id": item_id,
+                "type": "agentMessage",
+                "text": full_text,
+                "model": last_model,
+            },
         }),
     );
     emit_event(
@@ -1046,6 +1106,7 @@ async fn run_claude_prompt_once(
     claude_bin: Option<String>,
     prompt: String,
     permission_mode: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
     let mut command = build_claude_command_with_bin(claude_bin);
     command.current_dir(cwd);
@@ -1055,6 +1116,9 @@ async fn run_claude_prompt_once(
     command.arg("--no-session-persistence");
     if let Some(mode) = permission_mode {
         command.arg("--permission-mode").arg(mode);
+    }
+    if let Some(m) = model {
+        command.arg("--model").arg(m);
     }
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
@@ -1298,10 +1362,14 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                 }
             }
             if !text.trim().is_empty() {
+                let model = message
+                    .and_then(|message| message.get("model"))
+                    .and_then(|value| value.as_str());
                 items.push(json!({
                     "id": value.get("uuid").and_then(|v| v.as_str()).unwrap_or(thread_id),
                     "type": "agentMessage",
                     "text": text.trim(),
+                    "model": model,
                 }));
             }
         }
@@ -1799,6 +1867,9 @@ fn process_subagent_line(
             .get("uuid")
             .and_then(|v| v.as_str())
             .unwrap_or(thread_id);
+        let model = message
+            .and_then(|message| message.get("model"))
+            .and_then(|value| value.as_str());
         emit_event(
             event_sink,
             workspace_id,
@@ -1809,6 +1880,7 @@ fn process_subagent_line(
                     "id": message_id,
                     "type": "agentMessage",
                     "text": text,
+                    "model": model,
                 }
             }),
         );
@@ -2290,11 +2362,6 @@ fn resolve_permissions_path(
     resolve_default_claude_home()
         .map(|home| home.join("settings.json"))
         .ok_or_else(|| "Unable to resolve Claude settings path".to_string())
-}
-
-fn format_permission_rule(command: &[String]) -> String {
-    let joined = command.join(" ");
-    format!("Bash({joined}:*)")
 }
 
 fn read_settings_json(path: &Path) -> Result<Map<String, Value>, String> {

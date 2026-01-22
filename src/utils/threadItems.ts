@@ -9,6 +9,34 @@ function asString(value: unknown) {
   return typeof value === "string" ? value : value ? String(value) : "";
 }
 
+function formatJsonOutput(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return "";
+    }
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return JSON.stringify(JSON.parse(trimmed), null, 2);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function truncateText(text: string, maxLength = MAX_ITEM_TEXT) {
   if (text.length <= maxLength) {
     return text;
@@ -106,8 +134,22 @@ export function prepareThreadItems(items: ConversationItem[], _threadId?: string
     normalized.length > MAX_ITEMS_PER_THREAD
       ? normalized.slice(-MAX_ITEMS_PER_THREAD)
       : normalized;
-  const cutoff = Math.max(0, limited.length - TOOL_OUTPUT_RECENT_ITEMS);
-  return limited.map((item, index) => {
+  const deduped: ConversationItem[] = [];
+  for (const item of limited) {
+    const previous = deduped[deduped.length - 1];
+    if (
+      item.kind === "message" &&
+      item.role === "assistant" &&
+      previous?.kind === "review" &&
+      previous.state === "completed" &&
+      previous.text.trim() === item.text.trim()
+    ) {
+      continue;
+    }
+    deduped.push(item);
+  }
+  const cutoff = Math.max(0, deduped.length - TOOL_OUTPUT_RECENT_ITEMS);
+  return deduped.map((item, index) => {
     if (index >= cutoff || item.kind !== "tool") {
       return item;
     }
@@ -248,6 +290,7 @@ export function buildConversationItem(
     const server = asString(item.server ?? "");
     const tool = asString(item.tool ?? "");
     const args = item.arguments ? JSON.stringify(item.arguments, null, 2) : "";
+    const output = formatJsonOutput(item.result ?? item.error ?? "");
     return {
       id,
       kind: "tool",
@@ -255,7 +298,7 @@ export function buildConversationItem(
       title: `Tool: ${server}${tool ? ` / ${tool}` : ""}`,
       detail: args,
       status: asString(item.status ?? ""),
-      output: asString(item.result ?? item.error ?? ""),
+      output,
     };
   }
   if (type === "collabToolCall" || type === "collabAgentToolCall") {
@@ -358,11 +401,13 @@ export function buildConversationItemFromThreadItem(
     };
   }
   if (type === "agentMessage") {
+    const model = asString(item.model ?? "");
     return {
       id,
       kind: "message",
       role: "assistant",
       text: asString(item.text),
+      model: model || undefined,
     };
   }
   if (type === "reasoning") {

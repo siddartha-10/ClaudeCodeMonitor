@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ConversationItem,
+  PermissionDenial,
   RateLimitSnapshot,
   ThreadSummary,
   ThreadTokenUsage,
@@ -116,6 +117,7 @@ export type ThreadState = {
   threadListCursorByWorkspace: Record<string, string | null>;
   activeTurnIdByThread: Record<string, string | null>;
   approvals: ApprovalRequest[];
+  permissionDenials: PermissionDenial[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
   rateLimitsByWorkspace: Record<string, RateLimitSnapshot | null>;
   planByThread: Record<string, TurnPlan | null>;
@@ -152,6 +154,7 @@ export type ThreadAction =
       itemId: string;
       delta: string;
       hasCustomName: boolean;
+      model?: string | null;
     }
   | {
       type: "completeAgentMessage";
@@ -160,6 +163,7 @@ export type ThreadAction =
       itemId: string;
       text: string;
       hasCustomName: boolean;
+      model?: string | null;
     }
   | { type: "upsertItem"; threadId: string; item: ConversationItem }
   | { type: "setThreadItems"; threadId: string; items: ConversationItem[] }
@@ -189,6 +193,8 @@ export type ThreadAction =
     }
   | { type: "addApproval"; approval: ApprovalRequest }
   | { type: "removeApproval"; requestId: number; workspaceId: string }
+  | { type: "addPermissionDenials"; denials: PermissionDenial[] }
+  | { type: "removePermissionDenial"; denialId: string }
   | { type: "setThreadTokenUsage"; threadId: string; tokenUsage: ThreadTokenUsage }
   | {
       type: "setRateLimits";
@@ -218,6 +224,7 @@ export const initialState: ThreadState = {
   threadListCursorByWorkspace: {},
   activeTurnIdByThread: {},
   approvals: [],
+  permissionDenials: [],
   tokenUsageByThread: {},
   rateLimitsByWorkspace: {},
   planByThread: {},
@@ -595,6 +602,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           kind: "message",
           role: "assistant",
           text: action.delta,
+          model: action.model ?? undefined,
         });
       }
       const updatedItems = prepareThreadItems(list, action.threadId);
@@ -623,6 +631,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         list[index] = {
           ...existing,
           text: action.text || existing.text,
+          model: action.model ?? existing.model ?? undefined,
         };
       } else {
         list.push({
@@ -630,6 +639,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           kind: "message",
           role: "assistant",
           text: action.text,
+          model: action.model ?? undefined,
         });
       }
       const updatedItems = prepareThreadItems(list, action.threadId);
@@ -805,6 +815,34 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             item.workspace_id !== action.workspaceId,
         ),
       };
+    case "addPermissionDenials": {
+      if (!action.denials.length) {
+        return state;
+      }
+      const existingIds = new Set(state.permissionDenials.map((item) => item.id));
+      const additions = action.denials.filter(
+        (denial) => !existingIds.has(denial.id),
+      );
+      if (!additions.length) {
+        return state;
+      }
+      return {
+        ...state,
+        permissionDenials: [...state.permissionDenials, ...additions],
+      };
+    }
+    case "removePermissionDenial": {
+      const filtered = state.permissionDenials.filter(
+        (item) => item.id !== action.denialId,
+      );
+      if (filtered.length === state.permissionDenials.length) {
+        return state;
+      }
+      return {
+        ...state,
+        permissionDenials: filtered,
+      };
+    }
     case "setThreads": {
       return {
         ...state,

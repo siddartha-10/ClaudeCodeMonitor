@@ -3,6 +3,12 @@ type CommandInfo = {
   preview: string;
 };
 
+export type ApprovalRuleInfo = {
+  rule: string;
+  label: string;
+  commandTokens?: string[];
+};
+
 const COMMAND_KEYS = [
   "argv",
   "args",
@@ -14,6 +20,38 @@ const COMMAND_KEYS = [
   "proposedExecPolicyAmendment",
   "proposed_exec_policy_amendment",
 ];
+
+const TOOL_NAME_KEYS = ["tool_name", "toolName", "tool", "name"];
+
+export function getApprovalRuleInfo(
+  params: Record<string, unknown>,
+  method?: string,
+): ApprovalRuleInfo | null {
+  const commandInfo = getApprovalCommandInfo(params);
+  if (commandInfo) {
+    const prefix = normalizeCommandTokens(commandInfo.tokens).join(" ");
+    if (!prefix) {
+      return null;
+    }
+    return {
+      rule: `Bash(${prefix}:*)`,
+      label: `Allow commands that start with ${commandInfo.preview}`,
+      commandTokens: commandInfo.tokens,
+    };
+  }
+
+  const toolName = extractToolName(params) ?? extractToolNameFromMethod(method);
+  if (!toolName) {
+    return null;
+  }
+  if (toolName === "Bash") {
+    return null;
+  }
+  return {
+    rule: toolName,
+    label: `Always allow ${toolName}`,
+  };
+}
 
 export function getApprovalCommandInfo(
   params: Record<string, unknown>,
@@ -30,6 +68,30 @@ export function getApprovalCommandInfo(
     .map((token) => (token.includes(" ") ? JSON.stringify(token) : token))
     .join(" ");
   return { tokens: normalized, preview };
+}
+
+function extractToolName(params: Record<string, unknown>): string | null {
+  for (const key of TOOL_NAME_KEYS) {
+    const value = params[key];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+  return null;
+}
+
+function extractToolNameFromMethod(method?: string): string | null {
+  if (!method) {
+    return null;
+  }
+  const trimmed = method
+    .replace(/^codex\/requestApproval\/?/, "")
+    .replace(/^claude\/requestApproval\/?/, "")
+    .trim();
+  return trimmed || null;
 }
 
 function extractTokens(value: unknown): string[] | null {

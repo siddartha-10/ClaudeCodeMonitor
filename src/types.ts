@@ -42,7 +42,13 @@ export type Message = {
 };
 
 export type ConversationItem =
-  | { id: string; kind: "message"; role: "user" | "assistant"; text: string }
+  | {
+      id: string;
+      kind: "message";
+      role: "user" | "assistant";
+      text: string;
+      model?: string | null;
+    }
   | { id: string; kind: "reasoning"; summary: string; content: string }
   | { id: string; kind: "diff"; title: string; diff: string; status?: string }
   | { id: string; kind: "review"; state: "started" | "completed"; text: string }
@@ -124,6 +130,16 @@ export type ApprovalRequest = {
   request_id: number;
   method: string;
   params: Record<string, unknown>;
+};
+
+export type PermissionDenial = {
+  id: string;
+  workspace_id: string;
+  thread_id: string;
+  turn_id: string;
+  tool_name: string;
+  tool_use_id?: string | null;
+  tool_input?: Record<string, unknown> | null;
 };
 
 export type GitFileStatus = {

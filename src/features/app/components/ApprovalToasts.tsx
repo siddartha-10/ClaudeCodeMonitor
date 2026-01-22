@@ -1,19 +1,26 @@
 import { useEffect, useMemo } from "react";
-import type { ApprovalRequest, WorkspaceInfo } from "../../../types";
-import { getApprovalCommandInfo } from "../../../utils/approvalRules";
+import type { ApprovalRequest, PermissionDenial, WorkspaceInfo } from "../../../types";
+import type { ApprovalRuleInfo } from "../../../utils/approvalRules";
+import { getApprovalRuleInfo } from "../../../utils/approvalRules";
 
 type ApprovalToastsProps = {
   approvals: ApprovalRequest[];
+  permissionDenials?: PermissionDenial[];
   workspaces: WorkspaceInfo[];
   onDecision: (request: ApprovalRequest, decision: "accept" | "decline") => void;
-  onRemember?: (request: ApprovalRequest, command: string[]) => void;
+  onRemember?: (request: ApprovalRequest, ruleInfo: ApprovalRuleInfo) => void;
+  onPermissionRemember?: (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => void;
+  onPermissionDismiss?: (denial: PermissionDenial) => void;
 };
 
 export function ApprovalToasts({
   approvals,
+  permissionDenials,
   workspaces,
   onDecision,
   onRemember,
+  onPermissionRemember,
+  onPermissionDismiss,
 }: ApprovalToastsProps) {
   const workspaceLabels = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])),
@@ -49,7 +56,9 @@ export function ApprovalToasts({
     return () => window.removeEventListener("keydown", handler);
   }, [onDecision, primaryRequest]);
 
-  if (!approvals.length) {
+  const denials = permissionDenials ?? [];
+
+  if (!approvals.length && !denials.length) {
     return null;
   }
 
@@ -87,7 +96,7 @@ export function ApprovalToasts({
       {approvals.map((request) => {
         const workspaceName = workspaceLabels.get(request.workspace_id);
         const params = request.params ?? {};
-        const commandInfo = getApprovalCommandInfo(params);
+        const ruleInfo = getApprovalRuleInfo(params, request.method);
         const entries = Object.entries(params);
         return (
           <div
@@ -136,11 +145,11 @@ export function ApprovalToasts({
               >
                 Decline
               </button>
-              {commandInfo && onRemember ? (
+              {ruleInfo && onRemember ? (
                 <button
                   className="ghost approval-toast-remember"
-                  onClick={() => onRemember(request, commandInfo.tokens)}
-                  title={`Allow commands that start with ${commandInfo.preview}`}
+                  onClick={() => onRemember(request, ruleInfo)}
+                  title={ruleInfo.label}
                 >
                   Always allow
                 </button>
@@ -151,6 +160,77 @@ export function ApprovalToasts({
               >
                 Approve (Enter)
               </button>
+            </div>
+          </div>
+        );
+      })}
+      {denials.map((denial) => {
+        const workspaceName = workspaceLabels.get(denial.workspace_id);
+        const toolInput = denial.tool_input ?? {};
+        const inputEntries =
+          toolInput && typeof toolInput === "object"
+            ? Object.entries(toolInput as Record<string, unknown>)
+            : [];
+        const ruleInfo = getApprovalRuleInfo(
+          toolInput && typeof toolInput === "object"
+            ? (toolInput as Record<string, unknown>)
+            : {},
+          `claude/requestApproval/${denial.tool_name}`,
+        );
+        return (
+          <div key={denial.id} className="approval-toast" role="alert">
+            <div className="approval-toast-header">
+              <div className="approval-toast-title">Permission denied</div>
+              {workspaceName ? (
+                <div className="approval-toast-workspace">{workspaceName}</div>
+              ) : null}
+            </div>
+            <div className="approval-toast-method">{denial.tool_name}</div>
+            <div className="approval-toast-details">
+              <div className="approval-toast-detail">
+                <div className="approval-toast-detail-label">Notice</div>
+                <div className="approval-toast-detail-value">
+                  Add to settings.local.json to allow.
+                </div>
+              </div>
+              {inputEntries.length
+                ? inputEntries.map(([key, value]) => {
+                    const rendered = renderParamValue(value);
+                    return (
+                      <div key={key} className="approval-toast-detail">
+                        <div className="approval-toast-detail-label">
+                          {formatLabel(key)}
+                        </div>
+                        {rendered.isCode ? (
+                          <pre className="approval-toast-detail-code">
+                            {rendered.text}
+                          </pre>
+                        ) : (
+                          <div className="approval-toast-detail-value">
+                            {rendered.text}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                : null}
+            </div>
+            <div className="approval-toast-actions">
+              <button
+                className="secondary"
+                onClick={() => onPermissionDismiss?.(denial)}
+              >
+                Dismiss
+              </button>
+              {ruleInfo && onPermissionRemember ? (
+                <button
+                  className="ghost approval-toast-remember"
+                  onClick={() => onPermissionRemember(denial, ruleInfo)}
+                  title={ruleInfo.label}
+                >
+                  Always allow
+                </button>
+              ) : null}
             </div>
           </div>
         );

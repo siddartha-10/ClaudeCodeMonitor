@@ -191,9 +191,9 @@ export async function respondToServerRequest(
 
 export async function rememberApprovalRule(
   workspaceId: string,
-  command: string[],
+  rule: string,
 ) {
-  return invoke("remember_approval_rule", { workspaceId, command });
+  return invoke("remember_approval_rule", { workspaceId, rule });
 }
 
 export async function getGitStatus(workspace_id: string): Promise<{

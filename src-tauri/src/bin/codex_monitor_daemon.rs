@@ -1034,15 +1034,11 @@ impl DaemonState {
     async fn remember_approval_rule(
         &self,
         workspace_id: String,
-        command: Vec<String>,
+        rule: String,
     ) -> Result<Value, String> {
-        let command = command
-            .into_iter()
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>();
-        if command.is_empty() {
-            return Err("empty command".to_string());
+        let rule = rule.trim();
+        if rule.is_empty() {
+            return Err("empty rule".to_string());
         }
 
         let (entry, parent_path) = {
@@ -1060,7 +1056,6 @@ impl DaemonState {
         };
 
         let settings_path = resolve_permissions_path(&entry, parent_path.as_deref())?;
-        let rule = format_permission_rule(&command);
         let mut settings = read_settings_json(&settings_path)?;
         let permissions = settings
             .entry("permissions")
@@ -1072,8 +1067,8 @@ impl DaemonState {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .ok_or("Unable to update permissions".to_string())?;
-        if !allow.iter().any(|item| item.as_str() == Some(&rule)) {
-            allow.push(Value::String(rule));
+        if !allow.iter().any(|item| item.as_str() == Some(rule)) {
+            allow.push(Value::String(rule.to_string()));
         }
         write_settings_json(&settings_path, &settings)?;
 
@@ -1199,6 +1194,7 @@ async fn run_claude_turn(
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_inputs: HashMap<String, Value> = HashMap::new();
     let mut tool_counter: usize = 0;
+    let mut permission_denials_emitted = false;
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
             continue;
@@ -1347,6 +1343,58 @@ async fn run_claude_turn(
             }
             if let Some(model_usage) = value.get("modelUsage") {
                 last_model_usage = Some(model_usage.clone());
+            }
+            if !permission_denials_emitted {
+                let denials = value
+                    .get("permission_denials")
+                    .or_else(|| value.get("permissionDenials"))
+                    .and_then(|item| item.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|entry| {
+                                let tool_name = entry
+                                    .get("tool_name")
+                                    .or_else(|| entry.get("toolName"))
+                                    .and_then(|item| item.as_str())?
+                                    .trim()
+                                    .to_string();
+                                if tool_name.is_empty() {
+                                    return None;
+                                }
+                                let tool_use_id = entry
+                                    .get("tool_use_id")
+                                    .or_else(|| entry.get("toolUseId"))
+                                    .and_then(|item| item.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_input = entry
+                                    .get("tool_input")
+                                    .or_else(|| entry.get("toolInput"))
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                Some(json!({
+                                    "toolName": tool_name,
+                                    "toolUseId": tool_use_id,
+                                    "toolInput": tool_input,
+                                }))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !denials.is_empty() {
+                    permission_denials_emitted = true;
+                    emit_event(
+                        event_sink,
+                        workspace_id,
+                        "turn/permissionDenied",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "permissionDenials": denials,
+                        }),
+                    );
+                }
             }
         }
     }
@@ -2138,11 +2186,6 @@ fn resolve_permissions_path(
         .ok_or_else(|| "Unable to resolve Claude settings path".to_string())
 }
 
-fn format_permission_rule(command: &[String]) -> String {
-    let joined = command.join(" ");
-    format!("Bash({joined}:*)")
-}
-
 fn read_settings_json(path: &Path) -> Result<Map<String, Value>, String> {
     if !path.exists() {
         return Ok(Map::new());
@@ -2653,10 +2696,6 @@ fn parse_optional_string_array(value: &Value, key: &str) -> Option<Vec<String>> 
     }
 }
 
-fn parse_string_array(value: &Value, key: &str) -> Result<Vec<String>, String> {
-    parse_optional_string_array(value, key).ok_or_else(|| format!("missing `{key}`"))
-}
-
 fn parse_optional_value(value: &Value, key: &str) -> Option<Value> {
     match value {
         Value::Object(map) => map.get(key).cloned(),
@@ -2861,8 +2900,8 @@ async fn handle_rpc_request(
         }
         "remember_approval_rule" => {
             let workspace_id = parse_string(&params, "workspaceId")?;
-            let command = parse_string_array(&params, "command")?;
-            state.remember_approval_rule(workspace_id, command).await
+            let rule = parse_string(&params, "rule")?;
+            state.remember_approval_rule(workspace_id, rule).await
         }
         _ => Err(format!("unknown method: {method}")),
     }

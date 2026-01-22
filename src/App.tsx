@@ -518,6 +518,7 @@ function MainApp() {
     activeThreadId,
     activeItems,
     approvals,
+    permissionDenials,
     threadsByWorkspace,
     threadParentById,
     threadStatusById,
@@ -544,7 +545,9 @@ function MainApp() {
     sendUserMessageToThread,
     startReview,
     handleApprovalDecision,
-    handleApprovalRemember
+    handleApprovalRemember,
+    handlePermissionRemember,
+    handlePermissionDismiss
   } = useThreads({
     activeWorkspace,
     onWorkspaceConnected: markWorkspaceConnected,
@@ -1277,8 +1280,11 @@ function MainApp() {
     activeItems,
     activeRateLimits,
     approvals,
+    permissionDenials,
     handleApprovalDecision,
     handleApprovalRemember,
+    handlePermissionRemember,
+    handlePermissionDismiss,
     onOpenSettings: () => openSettings(),
     onOpenDictationSettings: () => openSettings("dictation"),
     onOpenDebug: handleDebugClick,

@@ -6,6 +6,7 @@ import type {
   ConversationItem,
   CustomPromptOption,
   DebugEntry,
+  PermissionDenial,
   RateLimitSnapshot,
   ThreadSummary,
   ThreadTokenUsage,
@@ -15,6 +16,7 @@ import type {
   WorkspaceInfo,
 } from "../../../types";
 import {
+  type ApprovalRuleInfo,
   getApprovalCommandInfo,
   matchesCommandPrefix,
   normalizeCommandTokens,
@@ -809,6 +811,11 @@ export function useThreads({
         }
         dispatch({ type: "addApproval", approval });
       },
+      onPermissionDenied: ({ denials }: { denials: PermissionDenial[] }) => {
+        if (denials.length) {
+          dispatch({ type: "addPermissionDenials", denials });
+        }
+      },
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
         const inferredSource =
@@ -849,11 +856,13 @@ export function useThreads({
         threadId,
         itemId,
         text,
+        model,
       }: {
         workspaceId: string;
         threadId: string;
         itemId: string;
         text: string;
+        model?: string | null;
       }) => {
         const timestamp = Date.now();
         dispatch({ type: "ensureThread", workspaceId, threadId });
@@ -865,6 +874,7 @@ export function useThreads({
           itemId,
           text,
           hasCustomName,
+          model,
         });
         dispatch({
           type: "setLastAgentMessage",
@@ -1040,7 +1050,6 @@ export function useThreads({
       handleItemUpdate,
       handleTerminalInteraction,
       handleToolOutputDelta,
-      handleTerminalInteraction,
       markProcessing,
       onDebug,
       recordThreadActivity,
@@ -1885,9 +1894,9 @@ export function useThreads({
   );
 
   const handleApprovalRemember = useCallback(
-    async (request: ApprovalRequest, command: string[]) => {
+    async (request: ApprovalRequest, ruleInfo: ApprovalRuleInfo) => {
       try {
-        await rememberApprovalRule(request.workspace_id, command);
+        await rememberApprovalRule(request.workspace_id, ruleInfo.rule);
       } catch (error) {
         onDebug?.({
           id: `${Date.now()}-client-approval-rule-error`,
@@ -1898,7 +1907,9 @@ export function useThreads({
         });
       }
 
-      rememberApprovalPrefix(request.workspace_id, command);
+      if (ruleInfo.commandTokens) {
+        rememberApprovalPrefix(request.workspace_id, ruleInfo.commandTokens);
+      }
 
       await respondToServerRequest(
         request.workspace_id,
@@ -1913,6 +1924,33 @@ export function useThreads({
     },
     [onDebug, rememberApprovalPrefix],
   );
+
+  const handlePermissionRemember = useCallback(
+    async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
+      try {
+        await rememberApprovalRule(denial.workspace_id, ruleInfo.rule);
+      } catch (error) {
+        onDebug?.({
+          id: `${Date.now()}-client-permission-rule-error`,
+          timestamp: Date.now(),
+          source: "error",
+          label: "permission rule error",
+          payload: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      if (ruleInfo.commandTokens) {
+        rememberApprovalPrefix(denial.workspace_id, ruleInfo.commandTokens);
+      }
+
+      dispatch({ type: "removePermissionDenial", denialId: denial.id });
+    },
+    [onDebug, rememberApprovalPrefix],
+  );
+
+  const handlePermissionDismiss = useCallback((denial: PermissionDenial) => {
+    dispatch({ type: "removePermissionDenial", denialId: denial.id });
+  }, []);
 
   const setActiveThreadId = useCallback(
     (threadId: string | null, workspaceId?: string) => {
@@ -1977,6 +2015,7 @@ export function useThreads({
     setActiveThreadId,
     activeItems,
     approvals: state.approvals,
+    permissionDenials: state.permissionDenials,
     threadsByWorkspace: state.threadsByWorkspace,
     threadParentById: state.threadParentById,
     threadStatusById: state.threadStatusById,
@@ -2007,5 +2046,7 @@ export function useThreads({
     startReview,
     handleApprovalDecision,
     handleApprovalRemember,
+    handlePermissionRemember,
+    handlePermissionDismiss,
   };
 }
