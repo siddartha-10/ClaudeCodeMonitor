@@ -71,6 +71,7 @@ import { useClonePrompt } from "./features/workspaces/hooks/useClonePrompt";
 import { useWorkspaceController } from "./features/app/hooks/useWorkspaceController";
 import { useWorkspaceSelection } from "./features/workspaces/hooks/useWorkspaceSelection";
 import { useLocalUsage } from "./features/home/hooks/useLocalUsage";
+import { useClaudeTasks } from "./features/plan/hooks/useClaudeTasks";
 import { useWorkspaceHome } from "./features/workspaces/hooks/useWorkspaceHome";
 import { useGitHubPanelController } from "./features/app/hooks/useGitHubPanelController";
 import { useSettingsModalState } from "./features/app/hooks/useSettingsModalState";
@@ -799,12 +800,9 @@ function MainApp() {
   const activeTokenUsage = activeThreadId
     ? tokenUsageByThread[activeThreadId] ?? null
     : null;
-  const activePlan = activeThreadId
+  const serverPlan = activeThreadId
     ? planByThread[activeThreadId] ?? null
     : null;
-  const hasActivePlan = Boolean(
-    activePlan && (activePlan.steps.length > 0 || activePlan.explanation)
-  );
   const showHome = !activeWorkspace;
   const showWorkspaceHome = Boolean(activeWorkspace && !activeThreadId);
 
@@ -873,6 +871,15 @@ function MainApp() {
   const isReviewing = activeThreadId
     ? threadStatusById[activeThreadId]?.isReviewing ?? false
     : false;
+  const { plan: claudeTasksPlan } = useClaudeTasks({
+    activeThreadId,
+    isProcessing,
+  });
+  // Use server plan if available (turn/plan/updated events), otherwise fall back to Claude tasks
+  const activePlan = serverPlan ?? claudeTasksPlan;
+  const hasActivePlan = Boolean(
+    activePlan && (activePlan.steps.length > 0 || activePlan.explanation)
+  );
   const {
     activeImages,
     attachImages,

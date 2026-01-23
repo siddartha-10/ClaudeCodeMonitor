@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod backend;
 mod claude;
+mod claude_tasks;
 mod codex_home;
 mod codex_config;
 #[cfg(not(target_os = "windows"))]
@@ -137,7 +138,8 @@ pub fn run() {
             dictation::dictation_start,
             dictation::dictation_stop,
             dictation::dictation_cancel,
-            local_usage::local_usage_snapshot
+            local_usage::local_usage_snapshot,
+            claude_tasks::get_claude_tasks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
