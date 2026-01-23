@@ -664,6 +664,74 @@ Changes:\n{diff}"
     Ok(response)
 }
 
+#[tauri::command]
+pub async fn generate_run_metadata(
+    workspace_id: String,
+    prompt: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let entry = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .get(&workspace_id)
+            .ok_or("workspace not connected")?
+            .entry
+            .clone()
+    };
+
+    let default_bin = {
+        let settings = state.app_settings.lock().await;
+        settings.claude_bin.clone()
+    };
+
+    let system_prompt = format!(
+        "Generate metadata for a coding task based on the user's prompt. \
+Return ONLY valid JSON with no additional text, in this exact format:\n\
+{{\"title\": \"Title Case 3-7 Words\", \"worktreeName\": \"prefix/kebab-case-name\"}}\n\n\
+Rules for title:\n\
+- 3-7 words in Title Case\n\
+- Describe the task concisely\n\n\
+Rules for worktreeName:\n\
+- Use one of these prefixes: feat/, fix/, chore/, test/, docs/, refactor/, perf/, build/, ci/, style/\n\
+- Use kebab-case after the prefix\n\
+- Keep it short and descriptive\n\n\
+User's task description:\n{prompt}"
+    );
+
+    let response = run_claude_prompt_once(
+        &entry.path,
+        default_bin,
+        system_prompt,
+        Some("dontAsk".to_string()),
+        Some("haiku".to_string()),
+    )
+    .await?;
+
+    // Try to parse the response as JSON and return it
+    let trimmed = response.trim();
+    // Handle case where response might have markdown code blocks
+    let json_str = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+
+    match serde_json::from_str::<Value>(json_str) {
+        Ok(parsed) => Ok(parsed),
+        Err(_) => {
+            // Return a default structure if parsing fails
+            Ok(json!({
+                "title": null,
+                "worktreeName": null
+            }))
+        }
+    }
+}
+
 fn build_prompt_with_images(text: String, images: Option<Vec<String>>) -> String {
     let mut prompt = text.trim().to_string();
     if let Some(images) = images {

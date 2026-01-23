@@ -308,6 +308,21 @@ export type TurnPlan = {
   steps: TurnPlanStep[];
 };
 
+export type ClaudeTask = {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm: string | null;
+  status: string;
+  blocks: string[];
+  blockedBy: string[];
+};
+
+export type ClaudeTasksResponse = {
+  sessionId: string;
+  tasks: ClaudeTask[];
+};
+
 export type RateLimitWindow = {
   usedPercent: number;
   windowDurationMins: number | null;

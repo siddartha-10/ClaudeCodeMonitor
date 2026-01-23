@@ -7,6 +7,7 @@ type AppLayoutProps = {
   isPhone: boolean;
   isTablet: boolean;
   showHome: boolean;
+  showWorkspaceHome: boolean;
   showGitDetail: boolean;
   activeTab: "projects" | "codex" | "git" | "log";
   tabletTab: "codex" | "git" | "log";
@@ -19,6 +20,7 @@ type AppLayoutProps = {
   approvalToastsNode: ReactNode;
   updateToastNode: ReactNode;
   homeNode: ReactNode;
+  workspaceHomeNode: ReactNode;
   mainHeaderNode: ReactNode;
   desktopTopbarLeftNode: ReactNode;
   tabletNavNode: ReactNode;
@@ -41,6 +43,7 @@ export const AppLayout = memo(function AppLayout({
   isPhone,
   isTablet,
   showHome,
+  showWorkspaceHome,
   showGitDetail,
   activeTab,
   tabletTab,
@@ -53,6 +56,7 @@ export const AppLayout = memo(function AppLayout({
   approvalToastsNode,
   updateToastNode,
   homeNode,
+  workspaceHomeNode,
   mainHeaderNode,
   desktopTopbarLeftNode,
   tabletNavNode,
@@ -100,8 +104,10 @@ export const AppLayout = memo(function AppLayout({
         approvalToastsNode={approvalToastsNode}
         updateToastNode={updateToastNode}
         homeNode={homeNode}
+        workspaceHomeNode={workspaceHomeNode}
         showHome={showHome}
-        showWorkspace={activeWorkspace && !showHome}
+        showWorkspaceHome={showWorkspaceHome}
+        showWorkspace={activeWorkspace && !showHome && !showWorkspaceHome}
         sidebarNode={sidebarNode}
         tabletTab={tabletTab}
         onSidebarResizeStart={onSidebarResizeStart}
@@ -121,8 +127,10 @@ export const AppLayout = memo(function AppLayout({
       updateToastNode={updateToastNode}
       approvalToastsNode={approvalToastsNode}
       homeNode={homeNode}
+      workspaceHomeNode={workspaceHomeNode}
       showHome={showHome}
-      showWorkspace={activeWorkspace && !showHome}
+      showWorkspaceHome={showWorkspaceHome}
+      showWorkspace={activeWorkspace && !showHome && !showWorkspaceHome}
       topbarLeftNode={desktopTopbarLeftNode}
       centerMode={centerMode}
       messagesNode={messagesNode}

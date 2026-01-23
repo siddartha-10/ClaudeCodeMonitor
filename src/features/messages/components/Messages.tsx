@@ -28,12 +28,19 @@ type MessagesProps = {
   codeBlockCopyUseModifier?: boolean;
 };
 
+type TodoItem = {
+  content: string;
+  activeForm?: string;
+  status: "pending" | "in_progress" | "completed";
+};
+
 type ToolSummary = {
   label: string;
   value?: string;
   detail?: string;
   output?: string;
   badges?: { label: string; title?: string }[];
+  todos?: TodoItem[];
 };
 
 type StatusTone = "completed" | "processing" | "failed" | "unknown";
@@ -332,11 +339,21 @@ function buildToolSummary(
         };
       }
       if (toolName === "todowrite") {
-        const todos = toolInput.todos;
-        const count = Array.isArray(todos) ? todos.length : 0;
+        const rawTodos = toolInput.todos;
+        const todos: TodoItem[] = Array.isArray(rawTodos)
+          ? rawTodos.map((t) => ({
+              content: typeof t === "object" && t !== null ? String(t.content ?? "") : "",
+              activeForm: typeof t === "object" && t !== null ? String(t.activeForm ?? "") : undefined,
+              status: (typeof t === "object" && t !== null && ["pending", "in_progress", "completed"].includes(String(t.status)))
+                ? (t.status as "pending" | "in_progress" | "completed")
+                : "pending",
+            }))
+          : [];
+        const count = todos.length;
         return {
           label: "todos",
           value: count > 0 ? `${count} items` : "todos",
+          todos,
         };
       }
     }
@@ -632,10 +649,7 @@ const ReasoningRow = memo(function ReasoningRow({
     .replace(/[`*_~]/g, "")
     .replace(/\[(.*?)\]\(.*?\)/g, "$1")
     .trim();
-  const summaryTitle =
-    cleanTitle.length > 80
-      ? `${cleanTitle.slice(0, 80)}…`
-      : cleanTitle || "Reasoning";
+  const summaryTitle = cleanTitle || "Reasoning";
   const reasoningTone: StatusTone = summaryText ? "completed" : "processing";
   const bodyText =
     titleLineIndex >= 0
@@ -890,6 +904,23 @@ const ToolRow = memo(function ToolRow({
             onOpenFileLink={onOpenFileLink}
             onOpenFileLinkMenu={onOpenFileLinkMenu}
           />
+        )}
+        {isExpanded && summary.todos && summary.todos.length > 0 && (
+          <div className="tool-inline-todo-list">
+            {summary.todos.map((todo, index) => (
+              <div
+                key={`${item.id}-todo-${index}`}
+                className={`tool-inline-todo-item tool-inline-todo-${todo.status}`}
+              >
+                <span className="tool-inline-todo-status">
+                  {todo.status === "completed" && "✓"}
+                  {todo.status === "in_progress" && "▶"}
+                  {todo.status === "pending" && "○"}
+                </span>
+                <span className="tool-inline-todo-content">{todo.content}</span>
+              </div>
+            ))}
+          </div>
         )}
         {showCommandOutput && <CommandOutput output={summary.output ?? ""} />}
         {showToolOutput && summary.output && !isCommand && (

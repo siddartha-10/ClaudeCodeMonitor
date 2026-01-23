@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppSettings,
   ClaudeDoctorResult,
+  ClaudeTasksResponse,
   DictationModelStatus,
   DictationSessionState,
   LocalUsageSnapshot,
@@ -567,4 +568,17 @@ export async function generateCommitMessage(
   workspaceId: string,
 ): Promise<string> {
   return invoke("generate_commit_message", { workspaceId });
+}
+
+export async function generateRunMetadata(
+  workspaceId: string,
+  prompt: string,
+): Promise<{ title: string | null; worktreeName: string | null }> {
+  return invoke("generate_run_metadata", { workspaceId, prompt });
+}
+
+export async function getClaudeTasks(
+  sessionId: string,
+): Promise<ClaudeTasksResponse> {
+  return invoke<ClaudeTasksResponse>("get_claude_tasks", { sessionId });
 }

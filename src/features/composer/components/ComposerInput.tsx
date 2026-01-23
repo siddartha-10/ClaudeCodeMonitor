@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ClipboardEvent, KeyboardEvent, RefObject } from "react";
+import type { ClipboardEvent, CSSProperties, KeyboardEvent, RefObject } from "react";
 import type { AutocompleteItem } from "../hooks/useComposerAutocomplete";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
@@ -44,6 +44,7 @@ type ComposerInputProps = {
   highlightIndex: number;
   onHighlightIndex: (index: number) => void;
   onSelectSuggestion: (item: AutocompleteItem) => void;
+  suggestionsStyle?: CSSProperties;
 };
 
 export function ComposerInput({
@@ -80,6 +81,7 @@ export function ComposerInput({
   highlightIndex,
   onHighlightIndex,
   onSelectSuggestion,
+  suggestionsStyle,
 }: ComposerInputProps) {
   const suggestionListRef = useRef<HTMLDivElement | null>(null);
   const suggestionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -275,6 +277,7 @@ export function ComposerInput({
             className="composer-suggestions popover-surface"
             role="listbox"
             ref={suggestionListRef}
+            style={suggestionsStyle}
           >
             {suggestions.map((item, index) => (
               <button

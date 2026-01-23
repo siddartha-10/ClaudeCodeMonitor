@@ -6,7 +6,9 @@ type TabletLayoutProps = {
   approvalToastsNode: ReactNode;
   updateToastNode: ReactNode;
   homeNode: ReactNode;
+  workspaceHomeNode: ReactNode;
   showHome: boolean;
+  showWorkspaceHome: boolean;
   showWorkspace: boolean;
   sidebarNode: ReactNode;
   tabletTab: "projects" | "codex" | "git" | "log";
@@ -24,7 +26,9 @@ export function TabletLayout({
   approvalToastsNode,
   updateToastNode,
   homeNode,
+  workspaceHomeNode,
   showHome,
+  showWorkspaceHome,
   showWorkspace,
   sidebarNode,
   tabletTab,
@@ -51,6 +55,21 @@ export function TabletLayout({
         {approvalToastsNode}
         {updateToastNode}
         {showHome && homeNode}
+        {showWorkspaceHome && (
+          <>
+            <MainTopbar leftNode={topbarLeftNode} className="tablet-topbar" />
+            {tabletTab === "codex" && (
+              <div className="content tablet-content">{workspaceHomeNode}</div>
+            )}
+            {tabletTab === "git" && (
+              <div className="tablet-git">
+                {gitDiffPanelNode}
+                <div className="tablet-git-viewer">{gitDiffViewerNode}</div>
+              </div>
+            )}
+            {tabletTab === "log" && debugPanelNode}
+          </>
+        )}
         {showWorkspace && (
           <>
             <MainTopbar leftNode={topbarLeftNode} className="tablet-topbar" />

@@ -580,29 +580,6 @@ export function PromptPanel({
             </div>
           )}
         </div>
-        {globalPrompts.length > 0 ? (
-          <div className="prompt-list">
-            {globalPrompts.map((prompt) => renderPromptRow(prompt))}
-          </div>
-        ) : (
-          <div className="prompt-empty-card">
-            <ScrollText className="prompt-empty-icon" aria-hidden />
-            <div className="prompt-empty-text">
-              <div className="prompt-empty-title">No general prompts yet</div>
-              <div className="prompt-empty-subtitle">
-                Create one here or drop a .md file into{" "}
-                <button
-                  type="button"
-                  className="prompt-empty-link"
-                  onClick={() => void onRevealGeneralPrompts()}
-                >
-                  ~/.claude/agents
-                </button>
-                .
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </aside>
   );

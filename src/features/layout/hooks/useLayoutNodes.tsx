@@ -2,6 +2,7 @@ import type { DragEvent, MouseEvent, ReactNode, RefObject } from "react";
 import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left";
 import { Sidebar } from "../../app/components/Sidebar";
 import { Home } from "../../home/components/Home";
+import { WorkspaceHome } from "../../workspaces/components/WorkspaceHome";
 import { MainHeader } from "../../app/components/MainHeader";
 import { Messages } from "../../messages/components/Messages";
 import { ApprovalToasts } from "../../app/components/ApprovalToasts";
@@ -45,6 +46,7 @@ import type {
   TurnPlan,
   WorkspaceInfo,
 } from "../../../types";
+import type { WorkspaceHomeRun, WorkspaceRunMode } from "../../workspaces/hooks/useWorkspaceHome";
 import type { UpdateState } from "../../update/hooks/useUpdater";
 import type { TerminalSessionState } from "../../terminal/hooks/useTerminalSession";
 import type { TerminalTab } from "../../terminal/hooks/useTerminalTabs";
@@ -365,6 +367,20 @@ type LayoutNodesOptions = {
   onResizeTerminal: (event: MouseEvent<Element>) => void;
   onBackFromDiff: () => void;
   onGoProjects: () => void;
+  // Workspace Home props
+  showWorkspaceHome: boolean;
+  workspaceRuns: WorkspaceHomeRun[];
+  workspacePrompt: string;
+  setWorkspacePrompt: (value: string) => void;
+  startWorkspaceRun: (images?: string[]) => Promise<boolean>;
+  workspaceRunMode: WorkspaceRunMode;
+  setWorkspaceRunMode: (mode: WorkspaceRunMode) => void;
+  workspaceModelSelections: Record<string, number>;
+  toggleWorkspaceModelSelection: (modelId: string) => void;
+  setWorkspaceModelCount: (modelId: string, count: number) => void;
+  workspaceRunError: string | null;
+  workspaceRunSubmitting: boolean;
+  handleSelectWorkspaceInstance: (workspaceId: string, threadId: string) => void;
 };
 
 type LayoutNodesResult = {
@@ -374,6 +390,7 @@ type LayoutNodesResult = {
   approvalToastsNode: ReactNode;
   updateToastNode: ReactNode;
   homeNode: ReactNode;
+  workspaceHomeNode: ReactNode;
   mainHeaderNode: ReactNode;
   desktopTopbarLeftNode: ReactNode;
   tabletNavNode: ReactNode;
@@ -555,6 +572,45 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       onSelectThread={options.onSelectHomeThread}
     />
   );
+
+  const workspaceHomeNode =
+    options.showWorkspaceHome && options.activeWorkspace ? (
+      <WorkspaceHome
+        workspace={options.activeWorkspace}
+        runs={options.workspaceRuns}
+        prompt={options.workspacePrompt}
+        onPromptChange={options.setWorkspacePrompt}
+        onStartRun={options.startWorkspaceRun}
+        runMode={options.workspaceRunMode}
+        onRunModeChange={options.setWorkspaceRunMode}
+        models={options.models}
+        selectedModelId={options.selectedModelId}
+        onSelectModel={options.onSelectModel}
+        modelSelections={options.workspaceModelSelections}
+        onToggleModel={options.toggleWorkspaceModelSelection}
+        onModelCountChange={options.setWorkspaceModelCount}
+        error={options.workspaceRunError}
+        isSubmitting={options.workspaceRunSubmitting}
+        activeWorkspaceId={options.activeWorkspaceId}
+        activeThreadId={options.activeThreadId}
+        threadStatusById={options.threadStatusById}
+        onSelectInstance={options.handleSelectWorkspaceInstance}
+        skills={options.skills}
+        prompts={options.prompts}
+        files={options.files}
+        dictationEnabled={options.dictationEnabled}
+        dictationState={options.dictationState}
+        dictationLevel={options.dictationLevel}
+        onToggleDictation={options.onToggleDictation}
+        onOpenDictationSettings={options.onOpenDictationSettings ?? (() => {})}
+        dictationError={options.dictationError}
+        onDismissDictationError={options.onDismissDictationError}
+        dictationHint={options.dictationHint}
+        onDismissDictationHint={options.onDismissDictationHint}
+        dictationTranscript={options.dictationTranscript}
+        onDictationTranscriptHandled={options.onDictationTranscriptHandled}
+      />
+    ) : null;
 
   const mainHeaderNode = options.activeWorkspace ? (
     <MainHeader
@@ -808,6 +864,7 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
     approvalToastsNode,
     updateToastNode,
     homeNode,
+    workspaceHomeNode,
     mainHeaderNode,
     desktopTopbarLeftNode,
     tabletNavNode,

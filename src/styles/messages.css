@@ -465,9 +465,6 @@
   color: var(--text-stronger);
   font-weight: 500;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tool-inline-command {
@@ -582,6 +579,62 @@
 .tool-inline-change-path {
   font-size: 12px;
   color: var(--text-stronger);
+}
+
+.tool-inline-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.tool-inline-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+}
+
+.tool-inline-todo-status {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.tool-inline-todo-content {
+  flex: 1;
+  color: var(--text-normal);
+}
+
+.tool-inline-todo-pending .tool-inline-todo-status {
+  color: var(--text-quiet);
+}
+
+.tool-inline-todo-pending .tool-inline-todo-content {
+  color: var(--text-quiet);
+}
+
+.tool-inline-todo-in_progress .tool-inline-todo-status {
+  color: var(--accent);
+}
+
+.tool-inline-todo-in_progress .tool-inline-todo-content {
+  color: var(--text-normal);
+}
+
+.tool-inline-todo-completed .tool-inline-todo-status {
+  color: var(--green);
+}
+
+.tool-inline-todo-completed .tool-inline-todo-content {
+  color: var(--text-quiet);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-quiet);
 }
 
 .tool-inline-output {

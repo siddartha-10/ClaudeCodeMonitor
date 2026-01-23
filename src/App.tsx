@@ -24,6 +24,7 @@ import "./styles/settings.css";
 import "./styles/compact-base.css";
 import "./styles/compact-phone.css";
 import "./styles/compact-tablet.css";
+import "./styles/workspace-home.css";
 import successSoundUrl from "./assets/success-notification.mp3";
 import errorSoundUrl from "./assets/error-notification.mp3";
 import { AppLayout } from "./features/app/components/AppLayout";
@@ -70,6 +71,8 @@ import { useClonePrompt } from "./features/workspaces/hooks/useClonePrompt";
 import { useWorkspaceController } from "./features/app/hooks/useWorkspaceController";
 import { useWorkspaceSelection } from "./features/workspaces/hooks/useWorkspaceSelection";
 import { useLocalUsage } from "./features/home/hooks/useLocalUsage";
+import { useClaudeTasks } from "./features/plan/hooks/useClaudeTasks";
+import { useWorkspaceHome } from "./features/workspaces/hooks/useWorkspaceHome";
 import { useGitHubPanelController } from "./features/app/hooks/useGitHubPanelController";
 import { useSettingsModalState } from "./features/app/hooks/useSettingsModalState";
 import { usePersistComposerSettings } from "./features/app/hooks/usePersistComposerSettings";
@@ -797,13 +800,34 @@ function MainApp() {
   const activeTokenUsage = activeThreadId
     ? tokenUsageByThread[activeThreadId] ?? null
     : null;
-  const activePlan = activeThreadId
+  const serverPlan = activeThreadId
     ? planByThread[activeThreadId] ?? null
     : null;
-  const hasActivePlan = Boolean(
-    activePlan && (activePlan.steps.length > 0 || activePlan.explanation)
-  );
   const showHome = !activeWorkspace;
+  const showWorkspaceHome = Boolean(activeWorkspace && !activeThreadId);
+
+  const {
+    runs: workspaceRuns,
+    draft: workspacePrompt,
+    runMode: workspaceRunMode,
+    modelSelections: workspaceModelSelections,
+    error: workspaceRunError,
+    isSubmitting: workspaceRunSubmitting,
+    setDraft: setWorkspacePrompt,
+    setRunMode: setWorkspaceRunMode,
+    toggleModelSelection: toggleWorkspaceModelSelection,
+    setModelCount: setWorkspaceModelCount,
+    startRun: startWorkspaceRun,
+  } = useWorkspaceHome({
+    activeWorkspace,
+    models,
+    selectedModelId,
+    addWorktreeAgent,
+    connectWorkspace,
+    startThreadForWorkspace,
+    sendUserMessageToThread,
+  });
+
   const [usageMetric, setUsageMetric] = useState<"tokens" | "time">("tokens");
   const [usageWorkspaceId, setUsageWorkspaceId] = useState<string | null>(null);
   const usageWorkspaceOptions = useMemo(
@@ -847,6 +871,15 @@ function MainApp() {
   const isReviewing = activeThreadId
     ? threadStatusById[activeThreadId]?.isReviewing ?? false
     : false;
+  const { plan: claudeTasksPlan } = useClaudeTasks({
+    activeThreadId,
+    isProcessing,
+  });
+  // Use server plan if available (turn/plan/updated events), otherwise fall back to Claude tasks
+  const activePlan = serverPlan ?? claudeTasksPlan;
+  const hasActivePlan = Boolean(
+    activePlan && (activePlan.steps.length > 0 || activePlan.explanation)
+  );
   const {
     activeImages,
     attachImages,
@@ -1160,6 +1193,16 @@ function MainApp() {
     queueMessage,
   });
 
+  const handleSelectWorkspaceInstance = useCallback(
+    (workspaceId: string, threadId: string) => {
+      exitDiffView();
+      resetPullRequestSelection();
+      selectWorkspace(workspaceId);
+      setActiveThreadId(threadId, workspaceId);
+    },
+    [exitDiffView, resetPullRequestSelection, selectWorkspace, setActiveThreadId],
+  );
+
   const orderValue = (entry: WorkspaceInfo) =>
     typeof entry.settings.sortOrder === "number"
       ? entry.settings.sortOrder
@@ -1289,6 +1332,7 @@ function MainApp() {
     approvalToastsNode,
     updateToastNode,
     homeNode,
+    workspaceHomeNode,
     mainHeaderNode,
     desktopTopbarLeftNode,
     tabletNavNode,
@@ -1639,6 +1683,20 @@ function MainApp() {
     onWorkspaceDragEnter: handleWorkspaceDragEnter,
     onWorkspaceDragLeave: handleWorkspaceDragLeave,
     onWorkspaceDrop: handleWorkspaceDrop,
+    // Workspace Home props
+    showWorkspaceHome,
+    workspaceRuns,
+    workspacePrompt,
+    setWorkspacePrompt,
+    startWorkspaceRun,
+    workspaceRunMode,
+    setWorkspaceRunMode,
+    workspaceModelSelections,
+    toggleWorkspaceModelSelection,
+    setWorkspaceModelCount,
+    workspaceRunError,
+    workspaceRunSubmitting,
+    handleSelectWorkspaceInstance,
   });
 
   const desktopTopbarLeftNodeWithToggle = !isCompact ? (
@@ -1692,6 +1750,7 @@ function MainApp() {
         isPhone={isPhone}
         isTablet={isTablet}
         showHome={showHome}
+        showWorkspaceHome={showWorkspaceHome}
         showGitDetail={showGitDetail}
         activeTab={activeTab}
         tabletTab={tabletTab}
@@ -1704,6 +1763,7 @@ function MainApp() {
         approvalToastsNode={approvalToastsNode}
         updateToastNode={updateToastNode}
         homeNode={homeNode}
+        workspaceHomeNode={workspaceHomeNode}
         mainHeaderNode={mainHeaderNode}
         desktopTopbarLeftNode={desktopTopbarLeftNodeWithToggle}
         tabletNavNode={tabletNavNode}
