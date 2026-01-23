@@ -4,6 +4,7 @@ import {
   setLiquidGlassEffect,
   GlassMaterialVariant,
 } from "tauri-plugin-liquid-glass-api";
+import { Effect, EffectState, getCurrentWindow } from "@tauri-apps/api/window";
 import type { DebugEntry } from "../../../types";
 
 type Params = {
@@ -19,16 +20,44 @@ export function useLiquidGlassEffect({ reduceTransparency, onDebug }: Params) {
 
     const apply = async () => {
       try {
+        const window = getCurrentWindow();
+        if (reduceTransparency) {
+          if (supportedRef.current === null) {
+            supportedRef.current = await isGlassSupported();
+          }
+          if (supportedRef.current) {
+            await setLiquidGlassEffect({ enabled: false });
+          }
+          await window.setEffects({ effects: [] });
+          return;
+        }
+
         if (supportedRef.current === null) {
           supportedRef.current = await isGlassSupported();
         }
-        if (!supportedRef.current || cancelled) {
+        if (cancelled) {
           return;
         }
-        await setLiquidGlassEffect({
-          enabled: !reduceTransparency,
-          cornerRadius: 16,
-          variant: GlassMaterialVariant.Regular,
+        if (supportedRef.current) {
+          await window.setEffects({ effects: [] });
+          await setLiquidGlassEffect({
+            enabled: true,
+            cornerRadius: 16,
+            variant: GlassMaterialVariant.Regular,
+          });
+          return;
+        }
+
+        const userAgent = navigator.userAgent ?? "";
+        const isMac = userAgent.includes("Macintosh");
+        const isLinux = userAgent.includes("Linux");
+        if (!isMac && !isLinux) {
+          return;
+        }
+        await window.setEffects({
+          effects: [Effect.HudWindow],
+          state: EffectState.Active,
+          radius: 16,
         });
       } catch (error) {
         if (cancelled || !onDebug) {
