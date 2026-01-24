@@ -664,6 +664,14 @@ function dedupeUserMessagesWithinWindow(
   return deduped;
 }
 
+function isSessionStoppedMessage(item: ConversationItem): boolean {
+  return (
+    item.kind === "message" &&
+    item.role === "assistant" &&
+    item.text.trim() === "Session stopped."
+  );
+}
+
 export function mergeThreadItems(
   remoteItems: ConversationItem[],
   localItems: ConversationItem[],
@@ -672,7 +680,17 @@ export function mergeThreadItems(
     return remoteItems;
   }
 
-  const localIds = new Set(localItems.map((item) => item.id));
+  // Filter out local-only "Session stopped." messages - they're transient UI
+  // indicators that shouldn't persist across thread switches/resumes.
+  const filteredLocalItems = localItems.filter(
+    (item) => !isSessionStoppedMessage(item),
+  );
+
+  if (!filteredLocalItems.length) {
+    return remoteItems;
+  }
+
+  const localIds = new Set(filteredLocalItems.map((item) => item.id));
   const remoteIds = new Set(remoteItems.map((item) => item.id));
   const byId = new Map(remoteItems.map((item) => [item.id, item]));
 
@@ -706,11 +724,11 @@ export function mergeThreadItems(
   }
 
   const merged = remoteItems.map((item) => {
-    const local = localItems.find((entry) => entry.id === item.id);
+    const local = filteredLocalItems.find((entry) => entry.id === item.id);
     return local ? chooseRicherItem(item, local) : item;
   });
 
-  for (const item of localItems) {
+  for (const item of filteredLocalItems) {
     if (byId.has(item.id)) {
       continue;
     }
