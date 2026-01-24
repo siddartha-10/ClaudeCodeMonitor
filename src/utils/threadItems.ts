@@ -504,13 +504,14 @@ const USER_DEDUPE_WINDOW = 6;
 
 /**
  * Check if a message is an optimistic user message created locally before server confirmation.
- * These have IDs like "1705934567890-user" (timestamp + "-user").
+ * These have IDs like "1705934567890-user" (timestamp + "-user") from addUserMessage,
+ * or "optimistic-user-1705934567890-abc123" from steer mode.
  */
 function isOptimisticUserMessage(item: ConversationItem): boolean {
   return (
     item.kind === "message" &&
     item.role === "user" &&
-    /^\d+-user$/.test(item.id)
+    (/^\d+-user$/.test(item.id) || /^optimistic-user-\d+-[a-z0-9]+$/.test(item.id))
   );
 }
 

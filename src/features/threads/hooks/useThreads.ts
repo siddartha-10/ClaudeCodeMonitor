@@ -1615,6 +1615,7 @@ export function useThreads({
       const wasProcessing =
         (state.threadStatusById[threadId]?.isProcessing ?? false) &&
         steerEnabled;
+      let didInsertOptimistic = false;
       if (wasProcessing) {
         const optimisticText = finalText || (images.length > 0 ? "[image]" : "");
         if (optimisticText) {
@@ -1630,6 +1631,7 @@ export function useThreads({
               text: optimisticText,
             },
           });
+          didInsertOptimistic = true;
         }
       }
       Sentry.metrics.count("prompt_sent", 1, {
@@ -1645,14 +1647,16 @@ export function useThreads({
       });
       recordThreadActivity(workspace.id, threadId);
       const hasCustomName = Boolean(getCustomName(workspace.id, threadId));
-      dispatch({
-        type: "addUserMessage",
-        workspaceId: workspace.id,
-        threadId,
-        text: finalText,
-        images,
-        hasCustomName,
-      });
+      if (!didInsertOptimistic) {
+        dispatch({
+          type: "addUserMessage",
+          workspaceId: workspace.id,
+          threadId,
+          text: finalText,
+          images,
+          hasCustomName,
+        });
+      }
       markProcessing(threadId, true);
       safeMessageActivity();
       onDebug?.({
