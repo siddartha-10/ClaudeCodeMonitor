@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as Sentry from "@sentry/react";
 import type {
-  ApprovalRequest,
   AppServerEvent,
   ConversationItem,
   CustomPromptOption,
@@ -21,7 +20,6 @@ import {
   normalizeCommandTokens,
 } from "../../../utils/approvalRules";
 import {
-  respondToServerRequest,
   rememberApprovalRule,
   sendUserMessage as sendUserMessageService,
   startReview as startReviewService,
@@ -46,9 +44,9 @@ import { expandCustomPromptText } from "../../../utils/customPrompts";
 import { initialState, threadReducer } from "./useThreadsReducer";
 import { useThreadUserInput } from "./useThreadUserInput";
 
-const STORAGE_KEY_THREAD_ACTIVITY = "codexmonitor.threadLastUserActivity";
-const STORAGE_KEY_PINNED_THREADS = "codexmonitor.pinnedThreads";
-const STORAGE_KEY_CUSTOM_NAMES = "codexmonitor.threadCustomNames";
+const STORAGE_KEY_THREAD_ACTIVITY = "claude-code-monitor.threadLastUserActivity";
+const STORAGE_KEY_PINNED_THREADS = "claude-code-monitor.pinnedThreads";
+const STORAGE_KEY_CUSTOM_NAMES = "claude-code-monitor.threadCustomNames";
 const MAX_PINS_SOFT_LIMIT = 5;
 
 type ThreadActivityMap = Record<string, Record<string, number>>;
@@ -799,9 +797,6 @@ export function useThreads({
   const handlers = useMemo(
     () => ({
       onWorkspaceConnected: handleWorkspaceConnected,
-      onApprovalRequest: (approval: ApprovalRequest) => {
-        dispatch({ type: "addApproval", approval });
-      },
       onRequestUserInput: (request: RequestUserInputRequest) => {
         dispatch({ type: "addUserInputRequest", request });
       },
@@ -833,8 +828,7 @@ export function useThreads({
       },
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
-        const inferredSource =
-          method === "codex/stderr" || method === "claude/stderr" ? "stderr" : "event";
+        const inferredSource = method === "claude/stderr" ? "stderr" : "event";
         onDebug?.({
           id: `${Date.now()}-server-event`,
           timestamp: Date.now(),
@@ -2006,72 +2000,6 @@ export function useThreads({
     ],
   );
 
-  const handleApprovalDecision = useCallback(
-    async (request: ApprovalRequest, decision: "accept" | "decline") => {
-      const threadId = String(request.params.threadId ?? request.params.thread_id ?? "");
-      const requestIdValue =
-        request.params.requestId ?? request.params.request_id ?? request.request_id;
-      const requestId =
-        typeof requestIdValue === "string" || typeof requestIdValue === "number"
-          ? requestIdValue
-          : request.request_id;
-      await respondToServerRequest(
-        request.workspace_id,
-        threadId,
-        request.tool_use_id,
-        decision,
-        requestId,
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [],
-  );
-
-  const handleApprovalRemember = useCallback(
-    async (request: ApprovalRequest, ruleInfo: ApprovalRuleInfo) => {
-      try {
-        await rememberApprovalRule(request.workspace_id, ruleInfo.rule);
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-approval-rule-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "approval rule error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      if (ruleInfo.commandTokens) {
-        rememberApprovalPrefix(request.workspace_id, ruleInfo.commandTokens);
-      }
-
-      const threadId = String(request.params.threadId ?? request.params.thread_id ?? "");
-      const requestIdValue =
-        request.params.requestId ?? request.params.request_id ?? request.request_id;
-      const requestId =
-        typeof requestIdValue === "string" || typeof requestIdValue === "number"
-          ? requestIdValue
-          : request.request_id;
-      await respondToServerRequest(
-        request.workspace_id,
-        threadId,
-        request.tool_use_id,
-        "accept",
-        requestId,
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [onDebug, rememberApprovalPrefix],
-  );
-
   const handlePermissionRemember = useCallback(
     async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
       try {
@@ -2161,7 +2089,6 @@ export function useThreads({
     activeThreadId,
     setActiveThreadId,
     activeItems,
-    approvals: state.approvals,
     permissionDenials: state.permissionDenials,
     userInputRequests: state.userInputRequests,
     threadsByWorkspace: state.threadsByWorkspace,
@@ -2192,8 +2119,6 @@ export function useThreads({
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,

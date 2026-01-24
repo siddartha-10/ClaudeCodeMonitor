@@ -1,5 +1,4 @@
 import type {
-  ApprovalRequest,
   ConversationItem,
   PermissionDenial,
   RateLimitSnapshot,
@@ -117,7 +116,6 @@ export type ThreadState = {
   threadListPagingByWorkspace: Record<string, boolean>;
   threadListCursorByWorkspace: Record<string, string | null>;
   activeTurnIdByThread: Record<string, string | null>;
-  approvals: ApprovalRequest[];
   permissionDenials: PermissionDenial[];
   userInputRequests: RequestUserInputRequest[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
@@ -194,8 +192,6 @@ export type ThreadAction =
       workspaceId: string;
       cursor: string | null;
     }
-  | { type: "addApproval"; approval: ApprovalRequest }
-  | { type: "removeApproval"; requestId: number; workspaceId: string }
   | { type: "addPermissionDenials"; denials: PermissionDenial[] }
   | { type: "removePermissionDenial"; denialId: string }
   | { type: "addUserInputRequest"; request: RequestUserInputRequest }
@@ -229,7 +225,6 @@ export const initialState: ThreadState = {
   threadListPagingByWorkspace: {},
   threadListCursorByWorkspace: {},
   activeTurnIdByThread: {},
-  approvals: [],
   permissionDenials: [],
   userInputRequests: [],
   tokenUsageByThread: {},
@@ -822,26 +817,6 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         },
       };
     }
-    case "addApproval": {
-      const exists = state.approvals.some(
-        (item) =>
-          item.request_id === action.approval.request_id &&
-          item.workspace_id === action.approval.workspace_id,
-      );
-      if (exists) {
-        return state;
-      }
-      return { ...state, approvals: [...state.approvals, action.approval] };
-    }
-    case "removeApproval":
-      return {
-        ...state,
-        approvals: state.approvals.filter(
-          (item) =>
-            item.request_id !== action.requestId ||
-            item.workspace_id !== action.workspaceId,
-        ),
-      };
     case "addPermissionDenials": {
       if (!action.denials.length) {
         return state;

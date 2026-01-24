@@ -6,10 +6,10 @@ type PhoneLayoutProps = {
   updateToastNode: ReactNode;
   tabBarNode: ReactNode;
   sidebarNode: ReactNode;
-  activeTab: "projects" | "codex" | "git" | "log";
+  activeTab: "projects" | "claude" | "git" | "log";
   activeWorkspace: boolean;
   showGitDetail: boolean;
-  compactEmptyCodexNode: ReactNode;
+  compactEmptyClaudeNode: ReactNode;
   compactEmptyGitNode: ReactNode;
   compactGitBackNode: ReactNode;
   topbarLeftNode: ReactNode;
@@ -28,7 +28,7 @@ export function PhoneLayout({
   activeTab,
   activeWorkspace,
   showGitDetail,
-  compactEmptyCodexNode,
+  compactEmptyClaudeNode,
   compactEmptyGitNode,
   compactGitBackNode,
   topbarLeftNode,
@@ -43,7 +43,7 @@ export function PhoneLayout({
       {approvalToastsNode}
       {updateToastNode}
       {activeTab === "projects" && <div className="compact-panel">{sidebarNode}</div>}
-      {activeTab === "codex" && (
+      {activeTab === "claude" && (
         <div className="compact-panel">
           {activeWorkspace ? (
             <>
@@ -52,7 +52,7 @@ export function PhoneLayout({
               {composerNode}
             </>
           ) : (
-            compactEmptyCodexNode
+            compactEmptyClaudeNode
           )}
         </div>
       )}

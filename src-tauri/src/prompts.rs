@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::task;
 use tauri::State;
 
-use crate::codex_home::resolve_default_claude_home;
+use crate::claude_home::resolve_default_claude_home;
 use crate::state::AppState;
 use crate::types::WorkspaceEntry;
 
@@ -21,12 +21,12 @@ pub(crate) struct CustomPromptEntry {
     pub(crate) scope: Option<String>,
 }
 
-fn resolve_codex_home() -> Option<PathBuf> {
+fn resolve_claude_home() -> Option<PathBuf> {
     resolve_default_claude_home().and_then(|path| path.canonicalize().ok().or(Some(path)))
 }
 
 fn default_prompts_dir() -> Option<PathBuf> {
-    resolve_codex_home().map(|home| home.join("agents"))
+    resolve_claude_home().map(|home| home.join("agents"))
 }
 
 fn require_workspace_entry(

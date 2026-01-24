@@ -23,7 +23,6 @@ vi.mock("../../app/hooks/useAppServerEvents", () => ({
 }));
 
 vi.mock("../../../services/tauri", () => ({
-  respondToServerRequest: vi.fn(),
   respondToUserInputRequest: vi.fn(),
   rememberApprovalRule: vi.fn(),
   sendUserMessage: vi.fn(),
@@ -39,7 +38,7 @@ vi.mock("../../../services/tauri", () => ({
 const workspace: WorkspaceInfo = {
   id: "ws-1",
   name: "ClaudeCodeMonitor",
-  path: "/tmp/codex",
+  path: "/tmp/claude",
   connected: true,
   settings: { sidebarCollapsed: false },
 };

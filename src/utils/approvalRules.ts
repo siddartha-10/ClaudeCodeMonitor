@@ -25,7 +25,6 @@ const TOOL_NAME_KEYS = ["tool_name", "toolName", "tool", "name"];
 
 export function getApprovalRuleInfo(
   params: Record<string, unknown>,
-  method?: string,
 ): ApprovalRuleInfo | null {
   const commandInfo = getApprovalCommandInfo(params);
   if (commandInfo) {
@@ -40,7 +39,7 @@ export function getApprovalRuleInfo(
     };
   }
 
-  const toolName = extractToolName(params) ?? extractToolNameFromMethod(method);
+  const toolName = extractToolName(params);
   if (!toolName) {
     return null;
   }
@@ -81,17 +80,6 @@ function extractToolName(params: Record<string, unknown>): string | null {
     }
   }
   return null;
-}
-
-function extractToolNameFromMethod(method?: string): string | null {
-  if (!method) {
-    return null;
-  }
-  const trimmed = method
-    .replace(/^codex\/requestApproval\/?/, "")
-    .replace(/^claude\/requestApproval\/?/, "")
-    .trim();
-  return trimmed || null;
 }
 
 function extractTokens(value: unknown): string[] | null {

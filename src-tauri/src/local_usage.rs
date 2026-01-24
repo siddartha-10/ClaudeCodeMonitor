@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::codex_home::resolve_default_claude_home;
+use crate::claude_home::resolve_default_claude_home;
 use crate::types::{LocalUsageDay, LocalUsageModel, LocalUsageSnapshot, LocalUsageTotals};
 
 #[derive(Default, Clone, Copy)]
@@ -660,7 +660,7 @@ mod tests {
     fn write_temp_jsonl(lines: &[&str]) -> PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "codexmonitor-local-usage-test-{}.jsonl",
+            "claude-code-monitor-local-usage-test-{}.jsonl",
             Uuid::new_v4()
         ));
         let mut file = File::create(&path).expect("create temp jsonl");

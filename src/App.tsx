@@ -151,9 +151,9 @@ function MainApp() {
   useLiquidGlassEffect({ reduceTransparency, onDebug: addDebugEntry });
   const [accessMode, setAccessMode] = useState<AccessMode>("current");
   const [activeTab, setActiveTab] = useState<
-    "projects" | "codex" | "git" | "log"
-  >("codex");
-  const tabletTab = activeTab === "projects" ? "codex" : activeTab;
+    "projects" | "claude" | "git" | "log"
+  >("claude");
+  const tabletTab = activeTab === "projects" ? "claude" : activeTab;
   const {
     workspaces,
     workspaceGroups,
@@ -553,7 +553,6 @@ function MainApp() {
     setActiveThreadId,
     activeThreadId,
     activeItems,
-    approvals,
     permissionDenials,
     userInputRequests,
     threadsByWorkspace,
@@ -581,8 +580,6 @@ function MainApp() {
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
@@ -688,7 +685,7 @@ function MainApp() {
     addWorktreeAgent,
     connectWorkspace,
     onSelectWorkspace: selectWorkspace,
-    onCompactActivate: isCompact ? () => setActiveTab("codex") : undefined,
+    onCompactActivate: isCompact ? () => setActiveTab("claude") : undefined,
     onError: (message) => {
       addDebugEntry({
         id: `${Date.now()}-client-add-worktree-error`,
@@ -741,7 +738,7 @@ function MainApp() {
     onSelectWorkspace: selectWorkspace,
     resolveProjectContext: resolveCloneProjectContext,
     persistProjectCopiesFolder,
-    onCompactActivate: isCompact ? () => setActiveTab("codex") : undefined,
+    onCompactActivate: isCompact ? () => setActiveTab("claude") : undefined,
     onError: (message) => {
       addDebugEntry({
         id: `${Date.now()}-client-add-clone-error`,
@@ -1102,7 +1099,7 @@ function MainApp() {
       return;
     }
     if (activeTab === "projects") {
-      setActiveTab("codex");
+      setActiveTab("claude");
     }
   }, [activeTab, isTablet]);
 
@@ -1259,7 +1256,7 @@ function MainApp() {
 
   const showComposer = !isCompact
     ? centerMode === "chat" || centerMode === "diff"
-    : (isTablet ? tabletTab : activeTab) === "codex";
+    : (isTablet ? tabletTab : activeTab) === "claude";
   const showGitDetail = Boolean(selectedDiffPath) && isPhone;
   const {
     terminalTabs,
@@ -1347,7 +1344,7 @@ function MainApp() {
     debugPanelNode,
     debugPanelFullNode,
     terminalDockNode,
-    compactEmptyCodexNode,
+    compactEmptyClaudeNode,
     compactEmptyGitNode,
     compactGitBackNode,
   } = useLayoutNodes({
@@ -1367,11 +1364,8 @@ function MainApp() {
     activeItems,
     activeRateLimits,
     codeBlockCopyUseModifier: appSettings.composerCodeBlockCopyUseModifier,
-    approvals,
     permissionDenials,
     userInputRequests,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
@@ -1393,7 +1387,7 @@ function MainApp() {
     onConnectWorkspace: async (workspace) => {
       await connectWorkspace(workspace);
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     onAddAgent: handleAddAgent,
@@ -1468,7 +1462,7 @@ function MainApp() {
       selectWorkspace(workspaceId);
       setActiveThreadId(threadId, workspaceId);
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     activeWorkspace,
@@ -1781,7 +1775,7 @@ function MainApp() {
         debugPanelNode={debugPanelNode}
         debugPanelFullNode={debugPanelFullNode}
         terminalDockNode={terminalDockNode}
-        compactEmptyCodexNode={compactEmptyCodexNode}
+        compactEmptyClaudeNode={compactEmptyClaudeNode}
         compactEmptyGitNode={compactEmptyGitNode}
         compactGitBackNode={compactGitBackNode}
         onSidebarResizeStart={onSidebarResizeStart}

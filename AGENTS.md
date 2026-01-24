@@ -1,13 +1,13 @@
-# CodexMonitor Agent Guide
+# ClaudeCodeMonitor Agent Guide
 
 ## Project Summary
-CodexMonitor is a macOS Tauri app that orchestrates Codex agents across local workspaces. The frontend is React + Vite; the backend is a Tauri Rust process that spawns `codex app-server` per workspace and streams JSON-RPC events.
+ClaudeCodeMonitor is a macOS Tauri app that orchestrates Claude Code agents across local workspaces. The frontend is React + Vite; the backend is a Tauri Rust process that spawns `claude app-server` per workspace and streams JSON-RPC events.
 
 ## Key Paths
 
 - `src/App.tsx`: composition root
 - `src/features/`: feature-sliced UI, hooks, and local helpers
-- `src/features/settings/components/SettingsView.tsx`: settings UI (projects, display, Codex)
+- `src/features/settings/components/SettingsView.tsx`: settings UI (projects, display, Claude)
 - `src/features/update/components/UpdateToast.tsx`: in-app updater UI
 - `src/features/home/components/Home.tsx`: home dashboard + latest agent runs
 - `src/features/settings/hooks/useAppSettings.ts`: app settings load/save + doctor
@@ -23,7 +23,7 @@ CodexMonitor is a macOS Tauri app that orchestrates Codex agents across local wo
 - `src-tauri/src/lib.rs`: backend app-server client
 - `src-tauri/src/git.rs`: git status/log/diff + GitHub issues via `gh`
 - `src-tauri/src/settings.rs`: app settings persistence
-- `src-tauri/src/codex_config.rs`: read/write Codex `config.toml` feature flags
+- `src-tauri/src/claude_config.rs`: read/write Claude `config.toml` feature flags
 - `src-tauri/src/prompts.rs`: custom prompt discovery/parsing
 - `src-tauri/tauri.conf.json`: window config + effects
 
@@ -46,7 +46,7 @@ CodexMonitor is a macOS Tauri app that orchestrates Codex agents across local wo
 
 ## App-Server Flow
 
-- Backend spawns `codex app-server` using the `codex` binary.
+- Backend spawns `claude app-server` using the `claude` binary.
 - Initializes with `initialize` request and `initialized` notification.
 - Streams JSON-RPC notifications over stdout; request/response pairs use `id`.
 - Approval requests arrive as server-initiated JSON-RPC requests.
@@ -119,7 +119,7 @@ npm run test:watch
 - App-server event handling: edit `src/features/app/hooks/useAppServerEvents.ts`.
 - Tauri IPC: add wrappers in `src/services/tauri.ts` and implement in `src-tauri/src/lib.rs`.
 - App settings or updater behavior: `src/features/settings/hooks/useAppSettings.ts`, `src/features/update/hooks/useUpdater.ts`, and `src/features/settings/components/SettingsView.tsx`.
-- Experimental feature toggles: UI state in `src/features/settings/components/SettingsView.tsx`, shared types in `src/types.ts`, and sync to Codex `config.toml` via `src-tauri/src/codex_config.rs` + `src-tauri/src/settings.rs` (daemon mirror in `src-tauri/src/bin/codex_monitor_daemon.rs`).
+- Experimental feature toggles: UI state in `src/features/settings/components/SettingsView.tsx`, shared types in `src/types.ts`, and sync to Claude `config.toml` via `src-tauri/src/claude_config.rs` + `src-tauri/src/settings.rs`.
 - Git diff behavior: `src/features/git/hooks/useGitStatus.ts` (polling + activity refresh) and `src-tauri/src/lib.rs` (libgit2 status).
 - GitHub issues panel: `src/features/git/hooks/useGitHubIssues.ts` + `src-tauri/src/git.rs`.
 - Thread history rendering: `src/features/threads/hooks/useThreads.ts` converts `thread/resume` turns into UI items.
@@ -132,8 +132,8 @@ npm run test:watch
 - The window uses `titleBarStyle: "Overlay"` and macOS private APIs for transparency.
 - Avoid breaking the JSON-RPC format; app-server rejects requests before initialization.
 - The debug panel is UI-only; it logs client/server/app-server events from `useAppServerEvents`.
-- App settings live in `settings.json` under the app data directory (Codex path, default access mode, UI scale).
-- Experimental toggles that map to Codex features (`collab`, `steer`, `unified_exec`) are synced to `CODEX_HOME/config.toml` (or `~/.codex/config.toml`) on load/save and are best-effort (settings still persist if the file is missing/unwritable).
+- App settings live in `settings.json` under the app data directory (Claude path, default access mode, UI scale).
+- Experimental toggles that map to Claude features (`collab`, `steer`, `unified_exec`) are synced to `CLAUDE_HOME/config.toml` (legacy `CODEX_HOME` supported) on load/save and are best-effort (settings still persist if the file is missing/unwritable).
 - UI preferences (panel sizes, reduced transparency toggle, recent thread activity) live in `localStorage`.
 - GitHub issues require `gh` to be installed and authenticated.
-- Custom prompts are loaded from `$CODEX_HOME/prompts` (or `~/.codex/prompts`) and support optional frontmatter metadata.
+- Custom prompts are loaded from `$CLAUDE_HOME/prompts` (legacy `$CODEX_HOME` supported) and support optional frontmatter metadata.

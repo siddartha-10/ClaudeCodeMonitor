@@ -3,8 +3,8 @@ use tauri::Manager;
 mod backend;
 mod claude;
 mod claude_tasks;
-mod codex_home;
-mod codex_config;
+mod claude_home;
+mod claude_config;
 #[cfg(not(target_os = "windows"))]
 #[path = "dictation.rs"]
 mod dictation;

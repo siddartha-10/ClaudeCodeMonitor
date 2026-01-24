@@ -20,7 +20,7 @@ use crate::backend::claude_cli::{
     spawn_workspace_session as spawn_workspace_session_inner,
 };
 use crate::backend::events::{AppServerEvent, EventSink};
-use crate::codex_home::{resolve_default_claude_home, resolve_workspace_claude_home};
+use crate::claude_home::{resolve_default_claude_home, resolve_workspace_claude_home};
 use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
 use crate::state::{AppState, WorkspaceWatcher};
@@ -578,18 +578,7 @@ pub(crate) async fn respond_to_server_request(
         .get(&workspace_id)
         .ok_or("workspace not connected")?;
 
-    if let Some(decision) = result.get("decision").and_then(|value| value.as_str()) {
-        let request_id = result
-            .get("request_id")
-            .or_else(|| result.get("requestId"))
-            .or_else(|| result.get("id"))
-            .cloned();
-        session
-            .send_permission_response(&thread_id, tool_use_id, decision, request_id)
-            .await
-    } else {
-        session.send_response(&thread_id, tool_use_id, result).await
-    }
+    session.send_response(&thread_id, tool_use_id, result).await
 }
 
 /// Gets the diff content for commit message generation
@@ -1147,89 +1136,6 @@ async fn read_persistent_stdout(
 
                 let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let subtype = value.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
-
-                let is_permission_request = matches!(
-                    event_type,
-                    "permission_request" | "permission-request" | "permissionRequest"
-                ) || (
-                    event_type == "permission"
-                        && matches!(subtype, "request" | "permission_request" | "permission-request")
-                ) || (
-                    event_type == "system"
-                        && matches!(subtype, "permission_request" | "permission-request")
-                );
-
-                if is_permission_request {
-                    let request_id = value
-                        .get("id")
-                        .and_then(value_to_u64)
-                        .or_else(|| value.get("request_id").and_then(value_to_u64))
-                        .or_else(|| value.get("requestId").and_then(value_to_u64))
-                        .unwrap_or_else(|| {
-                            request_id_counter += 1;
-                            request_id_counter
-                        });
-                    let tool_use_id = value
-                        .get("tool_use_id")
-                        .or_else(|| value.get("toolUseId"))
-                        .or_else(|| value.get("toolUseID"))
-                        .and_then(|v| v.as_str())
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| request_id.to_string());
-                    let tool_name = value
-                        .get("tool_name")
-                        .or_else(|| value.get("toolName"))
-                        .or_else(|| value.get("tool"))
-                        .or_else(|| value.get("name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Tool")
-                        .trim()
-                        .to_string();
-                    let tool_input = value
-                        .get("tool_input")
-                        .or_else(|| value.get("toolInput"))
-                        .or_else(|| value.get("input"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
-
-                    let mut params = json!({
-                        "threadId": thread_id,
-                        "turnId": current_turn_id,
-                        "toolUseId": tool_use_id,
-                        "tool_name": tool_name.clone(),
-                        "toolInput": tool_input.clone(),
-                    });
-                    if let Some(command) = tool_input.get("command").and_then(|v| v.as_str()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("command".to_string(), Value::String(command.to_string()));
-                        }
-                    }
-                    if let Some(args) = tool_input.get("args").and_then(|v| v.as_array()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("args".to_string(), Value::Array(args.clone()));
-                        }
-                    }
-                    if let Some(argv) = tool_input.get("argv").and_then(|v| v.as_array()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("argv".to_string(), Value::Array(argv.clone()));
-                        }
-                    }
-
-                    let method = if tool_name.is_empty() {
-                        "claude/requestApproval".to_string()
-                    } else {
-                        format!("claude/requestApproval/{tool_name}")
-                    };
-
-                    emit_event_with_id(
-                        &event_sink,
-                        &workspace_id,
-                        &method,
-                        request_id,
-                        params,
-                    );
-                    continue;
-                }
 
                 // Handle system init event
                 if event_type == "system" {
@@ -2645,14 +2551,6 @@ fn value_to_millis(value: &Value) -> Option<i64> {
     match value {
         Value::String(value) => parse_iso_timestamp(Some(value)),
         Value::Number(value) => value.as_i64().map(|raw| if raw < 1_000_000_000_000 { raw * 1000 } else { raw }),
-        _ => None,
-    }
-}
-
-fn value_to_u64(value: &Value) -> Option<u64> {
-    match value {
-        Value::String(value) => value.parse::<u64>().ok(),
-        Value::Number(value) => value.as_u64(),
         _ => None,
     }
 }

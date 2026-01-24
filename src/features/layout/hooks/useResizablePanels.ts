@@ -1,11 +1,11 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const STORAGE_KEY_SIDEBAR = "codexmonitor.sidebarWidth";
-const STORAGE_KEY_RIGHT_PANEL = "codexmonitor.rightPanelWidth";
-const STORAGE_KEY_PLAN_PANEL = "codexmonitor.planPanelHeight";
-const STORAGE_KEY_TERMINAL_PANEL = "codexmonitor.terminalPanelHeight";
-const STORAGE_KEY_DEBUG_PANEL = "codexmonitor.debugPanelHeight";
+const STORAGE_KEY_SIDEBAR = "claude-code-monitor.sidebarWidth";
+const STORAGE_KEY_RIGHT_PANEL = "claude-code-monitor.rightPanelWidth";
+const STORAGE_KEY_PLAN_PANEL = "claude-code-monitor.planPanelHeight";
+const STORAGE_KEY_TERMINAL_PANEL = "claude-code-monitor.terminalPanelHeight";
+const STORAGE_KEY_DEBUG_PANEL = "claude-code-monitor.debugPanelHeight";
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 420;
 const MIN_RIGHT_PANEL_WIDTH = 270;
@@ -34,7 +34,12 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function readStoredWidth(key: string, fallback: number, min: number, max: number) {
+function readStoredWidth(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   if (typeof window === "undefined") {
     return fallback;
   }

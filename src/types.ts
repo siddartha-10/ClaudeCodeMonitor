@@ -149,14 +149,6 @@ export type ClaudeDoctorResult = {
   path: string | null;
 };
 
-export type ApprovalRequest = {
-  workspace_id: string;
-  request_id: number;
-  tool_use_id: string;
-  method: string;
-  params: Record<string, unknown>;
-};
-
 export type PermissionDenial = {
   id: string;
   workspace_id: string;

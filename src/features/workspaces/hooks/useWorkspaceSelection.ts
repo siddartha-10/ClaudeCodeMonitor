@@ -5,7 +5,7 @@ import type { WorkspaceInfo, WorkspaceSettings } from "../../../types";
 type UseWorkspaceSelectionOptions = {
   workspaces: WorkspaceInfo[];
   isCompact: boolean;
-  setActiveTab: (tab: "projects" | "codex" | "git" | "log") => void;
+  setActiveTab: (tab: "projects" | "claude" | "git" | "log") => void;
   setActiveWorkspaceId: (workspaceId: string | null) => void;
   updateWorkspaceSettings: (
     workspaceId: string,
@@ -54,7 +54,7 @@ export function useWorkspaceSelection({
         },
       });
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     [
