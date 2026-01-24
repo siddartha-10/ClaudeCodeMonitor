@@ -940,8 +940,19 @@ pub(crate) async fn spawn_persistent_claude_session(
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
     let stderr_reader = AsyncBufReader::new(stderr);
 
-    // Store the persistent session for this thread (stdin + child)
-    session.set_persistent_session(thread_id.to_string(), stdin, child).await;
+    // Store the persistent session for this thread (stdin + child + permission_mode + model)
+    // Convert access_mode to the CLI permission mode for storage
+    let stored_permission_mode = access_mode.map(|mode| {
+        match mode {
+            "read-only" => "plan".to_string(),
+            "full-access" => "dontAsk".to_string(),
+            "current" => "default".to_string(),
+            other => other.to_string(),
+        }
+    });
+    // Store the model for detecting changes
+    let stored_model = model.map(|m| m.to_string());
+    session.set_persistent_session(thread_id.to_string(), stdin, child, stored_permission_mode, stored_model).await;
 
     Ok(PersistentSessionReaders {
         stdout: stdout_reader,
@@ -969,10 +980,57 @@ async fn ensure_persistent_session(
     // Acquire the session initialization lock to prevent race conditions
     let _init_guard = session.session_init_lock.lock().await;
 
+    // Convert requested access_mode to CLI permission mode for comparison
+    let requested_permission_mode = access_mode.map(|mode| {
+        match mode {
+            "read-only" => "plan".to_string(),
+            "full-access" => "dontAsk".to_string(),
+            "current" => "default".to_string(),
+            other => other.to_string(),
+        }
+    });
+
+    // Convert requested model for comparison (normalize empty strings to None)
+    let requested_model = model
+        .filter(|m| !m.trim().is_empty())
+        .map(|m| m.to_string());
+
     // Check if a persistent session already exists for THIS thread
     if session.has_persistent_session(thread_id).await {
-        // Session exists for this thread, just return a new turn_id
-        return Ok(Uuid::new_v4().to_string());
+        // Check if permission mode changed - if so, we need to restart the session
+        let current_permission_mode = session.get_persistent_session_permission_mode(thread_id).await;
+        let current_model = session.get_persistent_session_model(thread_id).await;
+
+        // Only restart if the requested mode is different from the current mode
+        // (treating None as equivalent to "default" for comparison)
+        let current_mode = current_permission_mode.as_deref().unwrap_or("default");
+        let requested_mode = requested_permission_mode.as_deref().unwrap_or("default");
+
+        let permission_mode_changed = current_mode != requested_mode;
+        let model_changed = current_model != requested_model;
+
+        if permission_mode_changed {
+            // Permission mode changed - kill the old session and spawn a new one
+            // This follows Claude CLI behavior: permission mode is per-process,
+            // so changing it requires starting a new process with --resume
+            eprintln!(
+                "[ensure_persistent_session] Permission mode changed from '{}' to '{}' for thread {}, restarting session",
+                current_mode, requested_mode, thread_id
+            );
+            session.kill_persistent_session(thread_id).await?;
+        } else if model_changed {
+            // Model changed - kill the old session and spawn a new one
+            // This follows Claude CLI behavior: model is per-process,
+            // so changing it requires starting a new process with --resume --model
+            eprintln!(
+                "[ensure_persistent_session] Model changed from '{:?}' to '{:?}' for thread {}, restarting session",
+                current_model, requested_model, thread_id
+            );
+            session.kill_persistent_session(thread_id).await?;
+        } else {
+            // Session exists with same permission mode and model, just return a new turn_id
+            return Ok(Uuid::new_v4().to_string());
+        }
     }
 
     let turn_id = Uuid::new_v4().to_string();

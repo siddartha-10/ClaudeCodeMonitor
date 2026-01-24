@@ -25,6 +25,12 @@ pub(crate) struct PersistentSession {
     pub(crate) child: Child,
     /// Pending turn ID to be used by the reader when starting a new turn
     pub(crate) pending_turn_id: Option<String>,
+    /// The permission mode this session was started with (e.g., "dontAsk", "plan")
+    /// Used to detect when permission mode changes and session needs restart
+    pub(crate) permission_mode: Option<String>,
+    /// The model this session was started with (e.g., "claude-sonnet-4-5-20250514")
+    /// Used to detect when model changes and session needs restart
+    pub(crate) model: Option<String>,
 }
 
 pub(crate) struct WorkspaceSession {
@@ -69,25 +75,46 @@ impl WorkspaceSession {
         }
     }
 
+    /// Interrupt a running turn for a specific thread.
+    ///
+    /// This handles two architectures:
+    /// 1. **active_turns** (old per-turn approach): Each turn spawns a new CLI process.
+    ///    In this case, we check turn_id to ensure we're killing the correct turn.
+    /// 2. **persistent_sessions** (new approach): One CLI process per thread, reused
+    ///    across multiple turns. The session is killed and will be respawned on next message.
+    ///
+    /// For persistent sessions, killing the process is the only way to interrupt since
+    /// Claude CLI's stream-json mode has no cancel/abort message type.
     pub(crate) async fn interrupt_turn(
         &self,
         thread_id: &str,
         turn_id: &str,
     ) -> Result<(), String> {
-        let mut active_turns = self.active_turns.lock().await;
-        let Some(active_turn) = active_turns.remove(thread_id) else {
-            return Ok(());
-        };
-        if active_turn.turn_id != turn_id {
-            active_turns.insert(thread_id.to_string(), active_turn);
-            return Ok(());
+        // First, check active_turns (old per-turn process management)
+        {
+            let mut active_turns = self.active_turns.lock().await;
+            if let Some(active_turn) = active_turns.remove(thread_id) {
+                if active_turn.turn_id == turn_id {
+                    // Matching turn, kill it
+                    let mut child = active_turn.child.lock().await;
+                    return match child.kill().await {
+                        Ok(_) => Ok(()),
+                        Err(err) if err.kind() == ErrorKind::InvalidInput => Ok(()),
+                        Err(err) => Err(err.to_string()),
+                    };
+                } else {
+                    // Wrong turn ID, put it back and return
+                    active_turns.insert(thread_id.to_string(), active_turn);
+                    return Ok(());
+                }
+            }
+            // Thread not in active_turns, continue to check persistent_sessions
         }
-        let mut child = active_turn.child.lock().await;
-        match child.kill().await {
-            Ok(_) => Ok(()),
-            Err(err) if err.kind() == ErrorKind::InvalidInput => Ok(()),
-            Err(err) => Err(err.to_string()),
-        }
+
+        // For persistent sessions, kill the session if it exists.
+        // The session will be respawned with --resume on the next message.
+        // This is idempotent - returns Ok(()) if no session exists.
+        self.kill_persistent_session(thread_id).await
     }
 
     /// Send a response to the Claude CLI server for a specific thread.
@@ -181,13 +208,31 @@ impl WorkspaceSession {
         thread_id: String,
         stdin: ChildStdin,
         child: Child,
+        permission_mode: Option<String>,
+        model: Option<String>,
     ) {
         let mut sessions = self.persistent_sessions.lock().await;
         sessions.insert(thread_id, PersistentSession {
             stdin,
             child,
             pending_turn_id: None,
+            permission_mode,
+            model,
         });
+    }
+
+    /// Get the permission mode for a thread's persistent session.
+    /// Returns None if no session exists or if the session has no permission mode set.
+    pub(crate) async fn get_persistent_session_permission_mode(&self, thread_id: &str) -> Option<String> {
+        let sessions = self.persistent_sessions.lock().await;
+        sessions.get(thread_id).and_then(|s| s.permission_mode.clone())
+    }
+
+    /// Get the model for a thread's persistent session.
+    /// Returns None if no session exists or if the session has no model set.
+    pub(crate) async fn get_persistent_session_model(&self, thread_id: &str) -> Option<String> {
+        let sessions = self.persistent_sessions.lock().await;
+        sessions.get(thread_id).and_then(|s| s.model.clone())
     }
 
     /// Set the pending turn ID for a thread's persistent session.
@@ -425,7 +470,7 @@ mod tests {
 
         // Set the session
         session
-            .set_persistent_session("thread-1".to_string(), stdin, child)
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
             .await;
 
         // After setting - should be true
@@ -443,13 +488,13 @@ mod tests {
 
         // Register all three threads
         session
-            .set_persistent_session("thread-alpha".to_string(), stdin1, child1)
+            .set_persistent_session("thread-alpha".to_string(), stdin1, child1, None, None)
             .await;
         session
-            .set_persistent_session("thread-beta".to_string(), stdin2, child2)
+            .set_persistent_session("thread-beta".to_string(), stdin2, child2, None, None)
             .await;
         session
-            .set_persistent_session("thread-gamma".to_string(), stdin3, child3)
+            .set_persistent_session("thread-gamma".to_string(), stdin3, child3, None, None)
             .await;
 
         // All three should exist
@@ -489,10 +534,10 @@ mod tests {
         let (stdin2, child2) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-A".to_string(), stdin1, child1)
+            .set_persistent_session("thread-A".to_string(), stdin1, child1, None, None)
             .await;
         session
-            .set_persistent_session("thread-B".to_string(), stdin2, child2)
+            .set_persistent_session("thread-B".to_string(), stdin2, child2, None, None)
             .await;
 
         // Sending to thread-A should succeed
@@ -542,10 +587,10 @@ mod tests {
         let (stdin2, child2) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-X".to_string(), stdin1, child1)
+            .set_persistent_session("thread-X".to_string(), stdin1, child1, None, None)
             .await;
         session
-            .set_persistent_session("thread-Y".to_string(), stdin2, child2)
+            .set_persistent_session("thread-Y".to_string(), stdin2, child2, None, None)
             .await;
 
         // Sending response to thread-X should succeed
@@ -579,7 +624,7 @@ mod tests {
         let (stdin, child) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin, child)
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
             .await;
 
         // Should be None initially
@@ -596,10 +641,10 @@ mod tests {
         let (stdin2, child2) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin1, child1)
+            .set_persistent_session("thread-1".to_string(), stdin1, child1, None, None)
             .await;
         session
-            .set_persistent_session("thread-2".to_string(), stdin2, child2)
+            .set_persistent_session("thread-2".to_string(), stdin2, child2, None, None)
             .await;
 
         // Set pending turn ID for thread-1 only
@@ -622,7 +667,7 @@ mod tests {
         let (stdin, child) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin, child)
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
             .await;
         session
             .set_pending_turn_id("thread-1", "turn-xyz".to_string())
@@ -647,7 +692,7 @@ mod tests {
         let (stdin, child) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin, child)
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
             .await;
 
         // Set first value
@@ -693,13 +738,13 @@ mod tests {
         let (stdin3, child3) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin1, child1)
+            .set_persistent_session("thread-1".to_string(), stdin1, child1, None, None)
             .await;
         session
-            .set_persistent_session("thread-2".to_string(), stdin2, child2)
+            .set_persistent_session("thread-2".to_string(), stdin2, child2, None, None)
             .await;
         session
-            .set_persistent_session("thread-3".to_string(), stdin3, child3)
+            .set_persistent_session("thread-3".to_string(), stdin3, child3, None, None)
             .await;
 
         // All three should exist initially
@@ -723,7 +768,7 @@ mod tests {
         let (stdin, child) = spawn_test_process().await;
 
         session
-            .set_persistent_session("thread-1".to_string(), stdin, child)
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
             .await;
 
         // Kill the session
@@ -759,7 +804,7 @@ mod tests {
         for i in 1..=5 {
             let (stdin, child) = spawn_test_process().await;
             session
-                .set_persistent_session(format!("thread-{}", i), stdin, child)
+                .set_persistent_session(format!("thread-{}", i), stdin, child, None, None)
                 .await;
         }
 
@@ -915,6 +960,156 @@ mod tests {
     }
 
     // ==========================================================================
+    // Tests for interrupt_turn with persistent sessions
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn interrupt_turn_kills_persistent_session() {
+        let session = create_test_workspace_session();
+        let (stdin, child) = spawn_test_process().await;
+
+        // Set up a persistent session
+        session
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
+            .await;
+
+        // Verify session exists
+        assert!(session.has_persistent_session("thread-1").await);
+
+        // Interrupt the turn (any turn_id works for persistent sessions)
+        let result = session.interrupt_turn("thread-1", "any-turn-id").await;
+        assert!(result.is_ok());
+
+        // Session should be removed after interrupt
+        assert!(!session.has_persistent_session("thread-1").await);
+    }
+
+    #[tokio::test]
+    async fn interrupt_turn_with_pending_kills_persistent_session() {
+        let session = create_test_workspace_session();
+        let (stdin, child) = spawn_test_process().await;
+
+        // Set up a persistent session
+        session
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
+            .await;
+
+        // Verify session exists
+        assert!(session.has_persistent_session("thread-1").await);
+
+        // Interrupt with "pending" turn_id (what frontend sends when no turn is active)
+        let result = session.interrupt_turn("thread-1", "pending").await;
+        assert!(result.is_ok());
+
+        // Session should be removed
+        assert!(!session.has_persistent_session("thread-1").await);
+    }
+
+    #[tokio::test]
+    async fn interrupt_turn_prefers_active_turns_over_persistent_sessions() {
+        let session = create_test_workspace_session();
+
+        // Set up both an active turn and a persistent session for the same thread
+        // (This shouldn't happen in practice, but tests the priority)
+        let (stdin1, child1) = spawn_test_process().await;
+        let (stdin2, child2) = spawn_test_process().await;
+
+        // Set up persistent session
+        session
+            .set_persistent_session("thread-1".to_string(), stdin1, child1, None, None)
+            .await;
+
+        // Set up active turn (drop stdin to avoid hanging)
+        drop(stdin2);
+        let child2 = Arc::new(Mutex::new(child2));
+        session
+            .track_turn("thread-1".to_string(), "turn-abc".to_string(), child2)
+            .await;
+
+        // Verify both exist
+        assert!(session.has_persistent_session("thread-1").await);
+        {
+            let active_turns = session.active_turns.lock().await;
+            assert!(active_turns.contains_key("thread-1"));
+        }
+
+        // Interrupt with matching turn_id - should kill active turn only
+        let result = session.interrupt_turn("thread-1", "turn-abc").await;
+        assert!(result.is_ok());
+
+        // Active turn should be removed
+        {
+            let active_turns = session.active_turns.lock().await;
+            assert!(!active_turns.contains_key("thread-1"));
+        }
+
+        // Persistent session should still exist (we returned early after killing active turn)
+        assert!(session.has_persistent_session("thread-1").await);
+
+        // Clean up
+        session.kill_persistent_session("thread-1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn interrupt_turn_does_not_kill_persistent_session_when_active_turn_has_wrong_id() {
+        let session = create_test_workspace_session();
+
+        // Set up both an active turn and a persistent session
+        let (stdin1, child1) = spawn_test_process().await;
+        let (stdin2, child2) = spawn_test_process().await;
+
+        // Set up persistent session
+        session
+            .set_persistent_session("thread-1".to_string(), stdin1, child1, None, None)
+            .await;
+
+        // Set up active turn with specific turn_id
+        drop(stdin2);
+        let child2 = Arc::new(Mutex::new(child2));
+        session
+            .track_turn("thread-1".to_string(), "turn-abc".to_string(), child2)
+            .await;
+
+        // Interrupt with WRONG turn_id - should not kill anything
+        let result = session.interrupt_turn("thread-1", "turn-xyz").await;
+        assert!(result.is_ok());
+
+        // Both should still exist
+        {
+            let active_turns = session.active_turns.lock().await;
+            assert!(active_turns.contains_key("thread-1"));
+        }
+        assert!(session.has_persistent_session("thread-1").await);
+
+        // Clean up
+        session.kill_all_persistent_sessions().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn interrupt_turn_is_idempotent_for_persistent_sessions() {
+        let session = create_test_workspace_session();
+        let (stdin, child) = spawn_test_process().await;
+
+        // Set up a persistent session
+        session
+            .set_persistent_session("thread-1".to_string(), stdin, child, None, None)
+            .await;
+
+        // First interrupt
+        let result1 = session.interrupt_turn("thread-1", "turn-1").await;
+        assert!(result1.is_ok());
+        assert!(!session.has_persistent_session("thread-1").await);
+
+        // Second interrupt on same thread (session already gone)
+        let result2 = session.interrupt_turn("thread-1", "turn-2").await;
+        assert!(result2.is_ok());
+
+        // Third interrupt
+        let result3 = session.interrupt_turn("thread-1", "turn-3").await;
+        assert!(result3.is_ok());
+    }
+
+    // ==========================================================================
     // Tests for build_claude_path_env
     // ==========================================================================
 
@@ -975,7 +1170,7 @@ mod tests {
 
                 // Set session
                 session_clone
-                    .set_persistent_session(thread_id.clone(), stdin, child)
+                    .set_persistent_session(thread_id.clone(), stdin, child, None, None)
                     .await;
 
                 // Verify it exists
