@@ -193,6 +193,23 @@ function normalizeRootPath(value: string) {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function isThreadInWorkspace(
+  threadCwd: string,
+  normalizedWorkspacePath: string,
+) {
+  if (!normalizedWorkspacePath) {
+    return true;
+  }
+  const normalizedThreadPath = normalizeRootPath(threadCwd);
+  if (!normalizedThreadPath) {
+    return true;
+  }
+  if (normalizedThreadPath === normalizedWorkspacePath) {
+    return true;
+  }
+  return normalizedThreadPath.startsWith(`${normalizedWorkspacePath}/`);
+}
+
 function extractRpcErrorMessage(response: unknown) {
   if (!response || typeof response !== "object") {
     return null;
@@ -1337,9 +1354,8 @@ export function useThreads({
           const nextCursor =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = nextCursor;
@@ -1500,9 +1516,8 @@ export function useThreads({
           const next =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = next;
