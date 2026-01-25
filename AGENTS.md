@@ -136,4 +136,4 @@ npm run test:watch
 - Experimental toggles that map to Claude features (`collab`, `steer`, `unified_exec`) are synced to `CLAUDE_HOME/config.toml` (legacy `CODEX_HOME` supported) on load/save and are best-effort (settings still persist if the file is missing/unwritable).
 - UI preferences (panel sizes, reduced transparency toggle, recent thread activity) live in `localStorage`.
 - GitHub issues require `gh` to be installed and authenticated.
-- Custom prompts are loaded from `$CLAUDE_HOME/prompts` (legacy `$CODEX_HOME` supported) and support optional frontmatter metadata.
+- Custom prompts are loaded from `$CLAUDE_HOME/agents` (legacy `$CODEX_HOME` supported) and support optional frontmatter metadata.

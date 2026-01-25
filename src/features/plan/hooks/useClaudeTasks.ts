@@ -86,15 +86,21 @@ export function useClaudeTasks({
     }
 
     let unlistenFn: (() => void) | null = null;
+    let cancelled = false;
 
     // Start the file watcher
     invoke("task_watcher_start", { listId: activeThreadId })
       .then(() => {
+        if (cancelled) return;
         // Listen for task list changes
         listen(`task-list-changed:${activeThreadId}`, () => {
           fetchTasks(activeThreadId);
         }).then((unlisten) => {
-          unlistenFn = unlisten;
+          if (cancelled) {
+            unlisten();
+          } else {
+            unlistenFn = unlisten;
+          }
         });
       })
       .catch(() => {
@@ -102,6 +108,7 @@ export function useClaudeTasks({
       });
 
     return () => {
+      cancelled = true;
       if (unlistenFn) {
         unlistenFn();
       }

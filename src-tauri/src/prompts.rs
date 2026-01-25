@@ -307,7 +307,7 @@ pub(crate) async fn prompts_workspace_dir(
 
 #[tauri::command]
 pub(crate) async fn prompts_global_dir() -> Result<String, String> {
-    let dir = default_prompts_dir().ok_or("Unable to resolve CODEX_HOME".to_string())?;
+    let dir = default_prompts_dir().ok_or("Unable to resolve CLAUDE_HOME".to_string())?;
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(dir.to_string_lossy().to_string())
 }
@@ -332,7 +332,7 @@ pub(crate) async fn prompts_create(
                 (dir, "workspace")
             }
             "global" => {
-                let dir = default_prompts_dir().ok_or("Unable to resolve CODEX_HOME".to_string())?;
+                let dir = default_prompts_dir().ok_or("Unable to resolve CLAUDE_HOME".to_string())?;
                 (dir, "global")
             }
             _ => return Err("Invalid scope.".to_string()),
@@ -455,7 +455,7 @@ pub(crate) async fn prompts_move(
         let entry = require_workspace_entry(&workspaces, &workspace_id)?;
         match scope.as_str() {
             "workspace" => workspace_prompts_dir(&state, &entry)?,
-            "global" => default_prompts_dir().ok_or("Unable to resolve CODEX_HOME".to_string())?,
+            "global" => default_prompts_dir().ok_or("Unable to resolve CLAUDE_HOME".to_string())?,
             _ => return Err("Invalid scope.".to_string()),
         }
     };
