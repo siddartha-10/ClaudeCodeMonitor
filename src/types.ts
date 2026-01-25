@@ -369,6 +369,7 @@ export type CreditsSnapshot = {
 export type RateLimitSnapshot = {
   primary: RateLimitWindow | null;
   secondary: RateLimitWindow | null;
+  sonnet: RateLimitWindow | null;
   credits: CreditsSnapshot | null;
   planType: string | null;
 };

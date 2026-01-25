@@ -87,6 +87,7 @@ import { useLiquidGlassEffect } from "./features/app/hooks/useLiquidGlassEffect"
 import { useCopyThread } from "./features/threads/hooks/useCopyThread";
 import { useTerminalController } from "./features/terminal/hooks/useTerminalController";
 import { useGitCommitController } from "./features/app/hooks/useGitCommitController";
+import { useGlobalRateLimits } from "./features/app/hooks/useGlobalRateLimits";
 import { pickWorkspacePath } from "./services/tauri";
 import type {
   AccessMode,
@@ -149,6 +150,7 @@ function MainApp() {
     clearDebugEntries,
   } = useDebugLog();
   useLiquidGlassEffect({ reduceTransparency, onDebug: addDebugEntry });
+  const { globalRateLimits } = useGlobalRateLimits();
   const [accessMode, setAccessMode] = useState<AccessMode>("current");
   const [activeTab, setActiveTab] = useState<
     "projects" | "claude" | "git" | "log"
@@ -562,7 +564,6 @@ function MainApp() {
     threadListPagingByWorkspace,
     threadListCursorByWorkspace,
     tokenUsageByThread,
-    rateLimitsByWorkspace,
     planByThread,
     lastAgentMessageByThread,
     interruptTurn,
@@ -795,9 +796,7 @@ function MainApp() {
     [hasLoaded, threadListLoadingByWorkspace, workspaces]
   );
 
-  const activeRateLimits = activeWorkspaceId
-    ? rateLimitsByWorkspace[activeWorkspaceId] ?? null
-    : null;
+  const activeRateLimits = globalRateLimits;
   const activeTokenUsage = activeThreadId
     ? tokenUsageByThread[activeThreadId] ?? null
     : null;
@@ -830,39 +829,12 @@ function MainApp() {
   });
 
   const [usageMetric, setUsageMetric] = useState<"tokens" | "time">("tokens");
-  const [usageWorkspaceId, setUsageWorkspaceId] = useState<string | null>(null);
-  const usageWorkspaceOptions = useMemo(
-    () =>
-      workspaces.map((workspace) => {
-        const groupName = getWorkspaceGroupName(workspace.id);
-        const label = groupName
-          ? `${groupName} / ${workspace.name}`
-          : workspace.name;
-        return { id: workspace.id, label };
-      }),
-    [getWorkspaceGroupName, workspaces],
-  );
-  const usageWorkspacePath = useMemo(() => {
-    if (!usageWorkspaceId) {
-      return null;
-    }
-    return workspacesById.get(usageWorkspaceId)?.path ?? null;
-  }, [usageWorkspaceId, workspacesById]);
-  useEffect(() => {
-    if (!usageWorkspaceId) {
-      return;
-    }
-    if (workspaces.some((workspace) => workspace.id === usageWorkspaceId)) {
-      return;
-    }
-    setUsageWorkspaceId(null);
-  }, [usageWorkspaceId, workspaces]);
   const {
     snapshot: localUsageSnapshot,
     isLoading: isLoadingLocalUsage,
     error: localUsageError,
     refresh: refreshLocalUsage,
-  } = useLocalUsage(showHome, usageWorkspacePath);
+  } = useLocalUsage(showHome);
   const canInterrupt = activeThreadId
     ? threadStatusById[activeThreadId]?.isProcessing ?? false
     : false;
@@ -1454,9 +1426,6 @@ function MainApp() {
     },
     usageMetric,
     onUsageMetricChange: setUsageMetric,
-    usageWorkspaceId,
-    usageWorkspaceOptions,
-    onUsageWorkspaceChange: setUsageWorkspaceId,
     onSelectHomeThread: (workspaceId, threadId) => {
       exitDiffView();
       selectWorkspace(workspaceId);

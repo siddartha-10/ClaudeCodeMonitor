@@ -31,7 +31,6 @@ vi.mock("../../../services/tauri", () => ({
   listThreads: vi.fn(),
   resumeThread: vi.fn(),
   archiveThread: vi.fn(),
-  getAccountRateLimits: vi.fn(),
   interruptTurn: vi.fn(),
 }));
 

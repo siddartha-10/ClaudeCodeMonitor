@@ -157,10 +157,13 @@ export function Sidebar({
   const {
     sessionPercent,
     weeklyPercent,
+    sonnetPercent,
     sessionResetLabel,
     weeklyResetLabel,
+    sonnetResetLabel,
     creditsLabel,
     showWeekly,
+    showSonnet,
   } = getUsageLabels(accountRateLimits);
 
   const pinnedThreadRows = (() => {
@@ -492,10 +495,13 @@ export function Sidebar({
       <SidebarFooter
         sessionPercent={sessionPercent}
         weeklyPercent={weeklyPercent}
+        sonnetPercent={sonnetPercent}
         sessionResetLabel={sessionResetLabel}
         weeklyResetLabel={weeklyResetLabel}
+        sonnetResetLabel={sonnetResetLabel}
         creditsLabel={creditsLabel}
         showWeekly={showWeekly}
+        showSonnet={showSonnet}
       />
       <SidebarCornerActions
         onOpenSettings={onOpenSettings}

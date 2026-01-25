@@ -331,8 +331,10 @@ export async function getCollaborationModes(workspaceId: string) {
   return invoke<any>("collaboration_mode_list", { workspaceId });
 }
 
-export async function getAccountRateLimits(workspaceId: string) {
-  return invoke<any>("account_rate_limits", { workspaceId });
+export async function getGlobalRateLimits() {
+  return invoke<{ rateLimits: Record<string, unknown> | null }>(
+    "global_rate_limits",
+  );
 }
 
 export async function getSkillsList(workspaceId: string) {

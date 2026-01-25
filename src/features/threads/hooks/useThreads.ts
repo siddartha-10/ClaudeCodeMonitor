@@ -6,7 +6,6 @@ import type {
   CustomPromptOption,
   DebugEntry,
   PermissionDenial,
-  RateLimitSnapshot,
   RequestUserInputRequest,
   ThreadSummary,
   ThreadTokenUsage,
@@ -27,7 +26,6 @@ import {
   listThreads as listThreadsService,
   resumeThread as resumeThreadService,
   archiveThread as archiveThreadService,
-  getAccountRateLimits,
   interruptTurn as interruptTurnService,
 } from "../../../services/tauri";
 import { useAppServerEvents } from "../../app/hooks/useAppServerEvents";
@@ -308,80 +306,6 @@ function normalizeTokenUsage(raw: Record<string, unknown>): ThreadTokenUsage {
   };
 }
 
-function normalizeRateLimits(raw: Record<string, unknown>): RateLimitSnapshot {
-  const primary = (raw.primary as Record<string, unknown>) ?? null;
-  const secondary = (raw.secondary as Record<string, unknown>) ?? null;
-  const credits = (raw.credits as Record<string, unknown>) ?? null;
-  return {
-    primary: primary
-      ? {
-          usedPercent: asNumber(primary.usedPercent ?? primary.used_percent),
-          windowDurationMins: (() => {
-            const value = primary.windowDurationMins ?? primary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = primary.resetsAt ?? primary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    secondary: secondary
-      ? {
-          usedPercent: asNumber(secondary.usedPercent ?? secondary.used_percent),
-          windowDurationMins: (() => {
-            const value = secondary.windowDurationMins ?? secondary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = secondary.resetsAt ?? secondary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    credits: credits
-      ? {
-          hasCredits: Boolean(credits.hasCredits ?? credits.has_credits),
-          unlimited: Boolean(credits.unlimited),
-          balance: typeof credits.balance === "string" ? credits.balance : null,
-        }
-      : null,
-    planType: typeof raw.planType === "string"
-      ? raw.planType
-      : typeof raw.plan_type === "string"
-        ? raw.plan_type
-        : null,
-  };
-}
-
 function normalizePlanStepStatus(value: unknown): TurnPlanStepStatus {
   const raw = typeof value === "string" ? value : "";
   const normalized = raw.replace(/[_\s-]/g, "").toLowerCase();
@@ -562,53 +486,6 @@ export function useThreads({
     [activeThreadId, state.itemsByThread],
   );
 
-  const refreshAccountRateLimits = useCallback(
-    async (workspaceId?: string) => {
-      const targetId = workspaceId ?? activeWorkspaceId;
-      if (!targetId) {
-        return;
-      }
-      onDebug?.({
-        id: `${Date.now()}-client-account-rate-limits`,
-        timestamp: Date.now(),
-        source: "client",
-        label: "account/rateLimits/read",
-        payload: { workspaceId: targetId },
-      });
-      try {
-        const response = await getAccountRateLimits(targetId);
-        onDebug?.({
-          id: `${Date.now()}-server-account-rate-limits`,
-          timestamp: Date.now(),
-          source: "server",
-          label: "account/rateLimits/read response",
-          payload: response,
-        });
-        const rateLimits =
-          (response?.result?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.result?.rate_limits as Record<string, unknown> | undefined) ??
-          (response?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.rate_limits as Record<string, unknown> | undefined);
-        if (rateLimits) {
-          dispatch({
-            type: "setRateLimits",
-            workspaceId: targetId,
-            rateLimits: normalizeRateLimits(rateLimits),
-          });
-        }
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-account-rate-limits-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "account/rateLimits/read error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [activeWorkspaceId, onDebug],
-  );
-
   const pushThreadErrorMessage = useCallback(
     (threadId: string, message: string) => {
       dispatch({
@@ -784,14 +661,6 @@ export function useThreads({
     [handleToolOutputDelta],
   );
 
-  const handleWorkspaceConnected = useCallback(
-    (workspaceId: string) => {
-      onWorkspaceConnected(workspaceId);
-      void refreshAccountRateLimits(workspaceId);
-    },
-    [onWorkspaceConnected, refreshAccountRateLimits],
-  );
-
   const rememberApprovalPrefix = useCallback((workspaceId: string, command: string[]) => {
     const normalized = normalizeCommandTokens(command);
     if (!normalized.length) {
@@ -813,7 +682,7 @@ export function useThreads({
 
   const handlers = useMemo(
     () => ({
-      onWorkspaceConnected: handleWorkspaceConnected,
+      onWorkspaceConnected,
       onRequestUserInput: (request: RequestUserInputRequest) => {
         dispatch({ type: "addUserInputRequest", request });
       },
@@ -1061,16 +930,6 @@ export function useThreads({
           tokenUsage: normalizeTokenUsage(tokenUsage),
         });
       },
-      onAccountRateLimitsUpdated: (
-        workspaceId: string,
-        rateLimits: Record<string, unknown>,
-      ) => {
-        dispatch({
-          type: "setRateLimits",
-          workspaceId,
-          rateLimits: normalizeRateLimits(rateLimits),
-        });
-      },
       onTurnError: (
         workspaceId: string,
         threadId: string,
@@ -1098,7 +957,7 @@ export function useThreads({
     [
       activeThreadId,
       getCustomName,
-      handleWorkspaceConnected,
+      onWorkspaceConnected,
       handleItemUpdate,
       handleTerminalInteraction,
       handleToolOutputDelta,
@@ -2094,12 +1953,6 @@ export function useThreads({
     [dispatch],
   );
 
-  useEffect(() => {
-    if (activeWorkspace?.connected) {
-      void refreshAccountRateLimits(activeWorkspace.id);
-    }
-  }, [activeWorkspace?.connected, activeWorkspace?.id, refreshAccountRateLimits]);
-
   return {
     activeThreadId,
     setActiveThreadId,
@@ -2114,10 +1967,8 @@ export function useThreads({
     threadListCursorByWorkspace: state.threadListCursorByWorkspace,
     activeTurnIdByThread: state.activeTurnIdByThread,
     tokenUsageByThread: state.tokenUsageByThread,
-    rateLimitsByWorkspace: state.rateLimitsByWorkspace,
     planByThread: state.planByThread,
     lastAgentMessageByThread: state.lastAgentMessageByThread,
-    refreshAccountRateLimits,
     interruptTurn,
     removeThread,
     pinThread,

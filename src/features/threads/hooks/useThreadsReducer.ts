@@ -1,7 +1,6 @@
 import type {
   ConversationItem,
   PermissionDenial,
-  RateLimitSnapshot,
   RequestUserInputRequest,
   ThreadSummary,
   ThreadTokenUsage,
@@ -119,7 +118,6 @@ export type ThreadState = {
   permissionDenials: PermissionDenial[];
   userInputRequests: RequestUserInputRequest[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
-  rateLimitsByWorkspace: Record<string, RateLimitSnapshot | null>;
   planByThread: Record<string, TurnPlan | null>;
   lastAgentMessageByThread: Record<string, { text: string; timestamp: number }>;
 };
@@ -198,11 +196,6 @@ export type ThreadAction =
   | { type: "removeUserInputRequest"; requestId: number; workspaceId: string }
   | { type: "clearUserInputRequestsForThread"; threadId: string; workspaceId: string }
   | { type: "setThreadTokenUsage"; threadId: string; tokenUsage: ThreadTokenUsage }
-  | {
-      type: "setRateLimits";
-      workspaceId: string;
-      rateLimits: RateLimitSnapshot | null;
-    }
   | { type: "setActiveTurnId"; threadId: string; turnId: string | null }
   | { type: "setThreadPlan"; threadId: string; plan: TurnPlan | null }
   | { type: "clearThreadPlan"; threadId: string }
@@ -228,7 +221,6 @@ export const initialState: ThreadState = {
   permissionDenials: [],
   userInputRequests: [],
   tokenUsageByThread: {},
-  rateLimitsByWorkspace: {},
   planByThread: {},
   lastAgentMessageByThread: {},
 };
@@ -921,14 +913,6 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         tokenUsageByThread: {
           ...state.tokenUsageByThread,
           [action.threadId]: action.tokenUsage,
-        },
-      };
-    case "setRateLimits":
-      return {
-        ...state,
-        rateLimitsByWorkspace: {
-          ...state.rateLimitsByWorkspace,
-          [action.workspaceId]: action.rateLimits,
         },
       };
     case "setThreadPlan":

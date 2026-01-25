@@ -68,11 +68,7 @@ type AppServerEventHandlers = {
     threadId: string,
     tokenUsage: Record<string, unknown>,
   ) => void;
-  onAccountRateLimitsUpdated?: (
-    workspaceId: string,
-    rateLimits: Record<string, unknown>,
-  ) => void;
-};
+  };
 
 export function useAppServerEvents(handlers: AppServerEventHandlers) {
   useEffect(() => {
@@ -289,17 +285,6 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
           (params.token_usage as Record<string, unknown> | undefined);
         if (threadId && tokenUsage) {
           handlers.onThreadTokenUsageUpdated?.(workspace_id, threadId, tokenUsage);
-        }
-        return;
-      }
-
-      if (method === "account/rateLimits/updated") {
-        const params = message.params as Record<string, unknown>;
-        const rateLimits =
-          (params.rateLimits as Record<string, unknown> | undefined) ??
-          (params.rate_limits as Record<string, unknown> | undefined);
-        if (rateLimits) {
-          handlers.onAccountRateLimitsUpdated?.(workspace_id, rateLimits);
         }
         return;
       }

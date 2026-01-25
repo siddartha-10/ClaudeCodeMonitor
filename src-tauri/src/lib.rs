@@ -121,7 +121,7 @@ pub fn run() {
             git::checkout_git_branch,
             git::create_git_branch,
             claude::model_list,
-            claude::account_rate_limits,
+            claude::global_rate_limits,
             claude::skills_list,
             prompts::prompts_list,
             prompts::prompts_create,

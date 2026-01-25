@@ -171,9 +171,6 @@ type LayoutNodesOptions = {
   onRefreshLocalUsage: () => void;
   usageMetric: "tokens" | "time";
   onUsageMetricChange: (metric: "tokens" | "time") => void;
-  usageWorkspaceId: string | null;
-  usageWorkspaceOptions: Array<{ id: string; label: string }>;
-  onUsageWorkspaceChange: (workspaceId: string | null) => void;
   onSelectHomeThread: (workspaceId: string, threadId: string) => void;
   activeWorkspace: WorkspaceInfo | null;
   activeParentWorkspace: WorkspaceInfo | null;
@@ -570,9 +567,6 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       onRefreshLocalUsage={options.onRefreshLocalUsage}
       usageMetric={options.usageMetric}
       onUsageMetricChange={options.onUsageMetricChange}
-      usageWorkspaceId={options.usageWorkspaceId}
-      usageWorkspaceOptions={options.usageWorkspaceOptions}
-      onUsageWorkspaceChange={options.onUsageWorkspaceChange}
       onSelectThread={options.onSelectHomeThread}
     />
   );
