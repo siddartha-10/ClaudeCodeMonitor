@@ -13,19 +13,11 @@ pub(crate) fn resolve_workspace_claude_home(
             if project_home.is_dir() {
                 return Some(project_home);
             }
-            let legacy_home = PathBuf::from(parent_path).join(".codexmonitor");
-            if legacy_home.is_dir() {
-                return Some(legacy_home);
-            }
         }
     }
     let project_home = PathBuf::from(&entry.path).join(".claude");
     if project_home.is_dir() {
         return Some(project_home);
-    }
-    let legacy_home = PathBuf::from(&entry.path).join(".codexmonitor");
-    if legacy_home.is_dir() {
-        return Some(legacy_home);
     }
     None
 }

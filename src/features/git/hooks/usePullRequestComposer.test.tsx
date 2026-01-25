@@ -37,7 +37,7 @@ const diffs: GitHubPullRequestDiff[] = [
 const connectedWorkspace: WorkspaceInfo = {
   id: "workspace-1",
   name: "ClaudeCodeMonitor",
-  path: "/tmp/codex",
+  path: "/tmp/claude",
   connected: true,
   settings: { sidebarCollapsed: false },
 };
@@ -45,7 +45,7 @@ const connectedWorkspace: WorkspaceInfo = {
 const disconnectedWorkspace: WorkspaceInfo = {
   id: "workspace-2",
   name: "ClaudeCodeMonitor",
-  path: "/tmp/codex",
+  path: "/tmp/claude",
   connected: false,
   settings: { sidebarCollapsed: false },
 };

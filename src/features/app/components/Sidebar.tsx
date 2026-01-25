@@ -19,7 +19,7 @@ import { useThreadRows } from "../hooks/useThreadRows";
 import { getUsageLabels } from "../utils/usageLabels";
 import { formatRelativeTimeShort } from "../../../utils/time";
 
-const COLLAPSED_GROUPS_STORAGE_KEY = "codexmonitor.collapsedGroups";
+const COLLAPSED_GROUPS_STORAGE_KEY = "claude-code-monitor.collapsedGroups";
 const UNGROUPED_COLLAPSE_ID = "__ungrouped__";
 const ADD_MENU_WIDTH = 200;
 
@@ -157,10 +157,13 @@ export function Sidebar({
   const {
     sessionPercent,
     weeklyPercent,
+    sonnetPercent,
     sessionResetLabel,
     weeklyResetLabel,
+    sonnetResetLabel,
     creditsLabel,
     showWeekly,
+    showSonnet,
   } = getUsageLabels(accountRateLimits);
 
   const pinnedThreadRows = (() => {
@@ -492,10 +495,13 @@ export function Sidebar({
       <SidebarFooter
         sessionPercent={sessionPercent}
         weeklyPercent={weeklyPercent}
+        sonnetPercent={sonnetPercent}
         sessionResetLabel={sessionResetLabel}
         weeklyResetLabel={weeklyResetLabel}
+        sonnetResetLabel={sonnetResetLabel}
         creditsLabel={creditsLabel}
         showWeekly={showWeekly}
+        showSonnet={showSonnet}
       />
       <SidebarCornerActions
         onOpenSettings={onOpenSettings}

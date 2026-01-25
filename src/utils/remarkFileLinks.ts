@@ -1,4 +1,4 @@
-const FILE_LINK_PROTOCOL = "codex-file:";
+const FILE_LINK_PROTOCOL = "claude-file:";
 
 const FILE_PATH_PATTERN =
   /(\/[^\s`"'<>]+|~\/[^\s`"'<>]+|\.{1,2}\/[^\s`"'<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g;
@@ -158,5 +158,8 @@ export function isFileLinkUrl(url: string) {
 }
 
 export function decodeFileLink(url: string) {
-  return decodeURIComponent(url.slice(FILE_LINK_PROTOCOL.length));
+  if (url.startsWith(FILE_LINK_PROTOCOL)) {
+    return decodeURIComponent(url.slice(FILE_LINK_PROTOCOL.length));
+  }
+  return decodeURIComponent(url);
 }

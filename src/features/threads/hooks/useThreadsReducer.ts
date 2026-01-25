@@ -1,8 +1,7 @@
 import type {
-  ApprovalRequest,
   ConversationItem,
   PermissionDenial,
-  RateLimitSnapshot,
+  RequestUserInputRequest,
   ThreadSummary,
   ThreadTokenUsage,
   TurnPlan,
@@ -116,10 +115,9 @@ export type ThreadState = {
   threadListPagingByWorkspace: Record<string, boolean>;
   threadListCursorByWorkspace: Record<string, string | null>;
   activeTurnIdByThread: Record<string, string | null>;
-  approvals: ApprovalRequest[];
   permissionDenials: PermissionDenial[];
+  userInputRequests: RequestUserInputRequest[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
-  rateLimitsByWorkspace: Record<string, RateLimitSnapshot | null>;
   planByThread: Record<string, TurnPlan | null>;
   lastAgentMessageByThread: Record<string, { text: string; timestamp: number }>;
 };
@@ -192,16 +190,12 @@ export type ThreadAction =
       workspaceId: string;
       cursor: string | null;
     }
-  | { type: "addApproval"; approval: ApprovalRequest }
-  | { type: "removeApproval"; requestId: number; workspaceId: string }
   | { type: "addPermissionDenials"; denials: PermissionDenial[] }
   | { type: "removePermissionDenial"; denialId: string }
+  | { type: "addUserInputRequest"; request: RequestUserInputRequest }
+  | { type: "removeUserInputRequest"; requestId: number; workspaceId: string }
+  | { type: "clearUserInputRequestsForThread"; threadId: string; workspaceId: string }
   | { type: "setThreadTokenUsage"; threadId: string; tokenUsage: ThreadTokenUsage }
-  | {
-      type: "setRateLimits";
-      workspaceId: string;
-      rateLimits: RateLimitSnapshot | null;
-    }
   | { type: "setActiveTurnId"; threadId: string; turnId: string | null }
   | { type: "setThreadPlan"; threadId: string; plan: TurnPlan | null }
   | { type: "clearThreadPlan"; threadId: string }
@@ -224,10 +218,9 @@ export const initialState: ThreadState = {
   threadListPagingByWorkspace: {},
   threadListCursorByWorkspace: {},
   activeTurnIdByThread: {},
-  approvals: [],
   permissionDenials: [],
+  userInputRequests: [],
   tokenUsageByThread: {},
-  rateLimitsByWorkspace: {},
   planByThread: {},
   lastAgentMessageByThread: {},
 };
@@ -816,26 +809,6 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         },
       };
     }
-    case "addApproval": {
-      const exists = state.approvals.some(
-        (item) =>
-          item.request_id === action.approval.request_id &&
-          item.workspace_id === action.approval.workspace_id,
-      );
-      if (exists) {
-        return state;
-      }
-      return { ...state, approvals: [...state.approvals, action.approval] };
-    }
-    case "removeApproval":
-      return {
-        ...state,
-        approvals: state.approvals.filter(
-          (item) =>
-            item.request_id !== action.requestId ||
-            item.workspace_id !== action.workspaceId,
-        ),
-      };
     case "addPermissionDenials": {
       if (!action.denials.length) {
         return state;
@@ -862,6 +835,43 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       return {
         ...state,
         permissionDenials: filtered,
+      };
+    }
+    case "addUserInputRequest": {
+      const exists = state.userInputRequests.some(
+        (item) =>
+          item.request_id === action.request.request_id &&
+          item.workspace_id === action.request.workspace_id,
+      );
+      if (exists) {
+        return state;
+      }
+      return {
+        ...state,
+        userInputRequests: [...state.userInputRequests, action.request],
+      };
+    }
+    case "removeUserInputRequest":
+      return {
+        ...state,
+        userInputRequests: state.userInputRequests.filter(
+          (item) =>
+            item.request_id !== action.requestId ||
+            item.workspace_id !== action.workspaceId,
+        ),
+      };
+    case "clearUserInputRequestsForThread": {
+      const filtered = state.userInputRequests.filter(
+        (item) =>
+          item.params.thread_id !== action.threadId ||
+          item.workspace_id !== action.workspaceId,
+      );
+      if (filtered.length === state.userInputRequests.length) {
+        return state;
+      }
+      return {
+        ...state,
+        userInputRequests: filtered,
       };
     }
     case "setThreads": {
@@ -903,14 +913,6 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         tokenUsageByThread: {
           ...state.tokenUsageByThread,
           [action.threadId]: action.tokenUsage,
-        },
-      };
-    case "setRateLimits":
-      return {
-        ...state,
-        rateLimitsByWorkspace: {
-          ...state.rateLimitsByWorkspace,
-          [action.workspaceId]: action.rateLimits,
         },
       };
     case "setThreadPlan":

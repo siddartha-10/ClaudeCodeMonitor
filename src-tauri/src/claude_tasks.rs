@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::codex_home::resolve_default_claude_home;
+use crate::claude_home::resolve_default_claude_home;
 
 /// A task from Claude's task system stored in ~/.claude/tasks/<session-id>/<task-id>.json
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -23,7 +23,7 @@ vi.mock("../../app/hooks/useAppServerEvents", () => ({
 }));
 
 vi.mock("../../../services/tauri", () => ({
-  respondToServerRequest: vi.fn(),
+  respondToUserInputRequest: vi.fn(),
   rememberApprovalRule: vi.fn(),
   sendUserMessage: vi.fn(),
   startReview: vi.fn(),
@@ -31,14 +31,13 @@ vi.mock("../../../services/tauri", () => ({
   listThreads: vi.fn(),
   resumeThread: vi.fn(),
   archiveThread: vi.fn(),
-  getAccountRateLimits: vi.fn(),
   interruptTurn: vi.fn(),
 }));
 
 const workspace: WorkspaceInfo = {
   id: "ws-1",
   name: "ClaudeCodeMonitor",
-  path: "/tmp/codex",
+  path: "/tmp/claude",
   connected: true,
   settings: { sidebarCollapsed: false },
 };

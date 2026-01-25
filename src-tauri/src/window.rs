@@ -12,6 +12,7 @@ static WINDOW_APPEARANCE_OVERRIDE: OnceLock<Mutex<Option<WindowAppearanceOverrid
     OnceLock::new();
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn set_window_appearance_override(handler: Option<WindowAppearanceOverride>) {
     let slot = WINDOW_APPEARANCE_OVERRIDE.get_or_init(|| Mutex::new(None));
     *slot.lock().unwrap() = handler;

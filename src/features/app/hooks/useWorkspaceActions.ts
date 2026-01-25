@@ -12,7 +12,7 @@ type Params = {
   connectWorkspace: (workspace: WorkspaceInfo) => Promise<void>;
   startThreadForWorkspace: (workspaceId: string) => Promise<string | null>;
   setActiveThreadId: (threadId: string | null, workspaceId: string) => void;
-  setActiveTab: (tab: "projects" | "codex" | "git" | "log") => void;
+  setActiveTab: (tab: "projects" | "claude" | "git" | "log") => void;
   exitDiffView: () => void;
   selectWorkspace: (workspaceId: string) => void;
   openWorktreePrompt: (workspace: WorkspaceInfo) => void;
@@ -41,7 +41,7 @@ export function useWorkspaceActions({
     (workspace: WorkspaceInfo) => {
       setActiveThreadId(null, workspace.id);
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     [isCompact, setActiveTab, setActiveThreadId],
@@ -105,7 +105,7 @@ export function useWorkspaceActions({
         });
       }
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
       setTimeout(() => composerInputRef.current?.focus(), 0);
     },

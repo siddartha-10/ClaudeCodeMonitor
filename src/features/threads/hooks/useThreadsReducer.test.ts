@@ -97,6 +97,33 @@ describe("threadReducer", () => {
     expect(stopped.threadStatusById["thread-1"]?.lastDurationMs).toBe(600);
   });
 
+  it("tracks request user input queue", () => {
+    const request = {
+      workspace_id: "ws-1",
+      request_id: 99,
+      params: {
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        item_id: "call-1",
+        tool_use_id: "toolu_123",
+        questions: [{ id: "q1", header: "Confirm", question: "Proceed?" }],
+      },
+    };
+    const added = threadReducer(initialState, {
+      type: "addUserInputRequest",
+      request,
+    });
+    expect(added.userInputRequests).toHaveLength(1);
+    expect(added.userInputRequests[0]).toEqual(request);
+
+    const removed = threadReducer(added, {
+      type: "removeUserInputRequest",
+      requestId: 99,
+      workspaceId: "ws-1",
+    });
+    expect(removed.userInputRequests).toHaveLength(0);
+  });
+
   it("drops local review-start items when server review starts", () => {
     const localReview: ConversationItem = {
       id: "review-start-1",
@@ -257,5 +284,55 @@ describe("threadReducer", () => {
       delta: "delta",
     });
     expect(next).toBe(base);
+  });
+
+  it("adds and removes user input requests by workspace and id", () => {
+    const requestA = {
+      workspace_id: "ws-1",
+      request_id: 1,
+      params: {
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        item_id: "item-1",
+        tool_use_id: "toolu_aaa",
+        questions: [],
+      },
+    };
+    const requestB = {
+      workspace_id: "ws-2",
+      request_id: 1,
+      params: {
+        thread_id: "thread-2",
+        turn_id: "turn-2",
+        item_id: "item-2",
+        tool_use_id: "toolu_bbb",
+        questions: [],
+      },
+    };
+
+    const added = threadReducer(initialState, {
+      type: "addUserInputRequest",
+      request: requestA,
+    });
+    expect(added.userInputRequests).toEqual([requestA]);
+
+    const deduped = threadReducer(added, {
+      type: "addUserInputRequest",
+      request: requestA,
+    });
+    expect(deduped.userInputRequests).toHaveLength(1);
+
+    const withSecond = threadReducer(added, {
+      type: "addUserInputRequest",
+      request: requestB,
+    });
+    expect(withSecond.userInputRequests).toHaveLength(2);
+
+    const removed = threadReducer(withSecond, {
+      type: "removeUserInputRequest",
+      requestId: 1,
+      workspaceId: "ws-1",
+    });
+    expect(removed.userInputRequests).toEqual([requestB]);
   });
 });

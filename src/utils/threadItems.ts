@@ -271,6 +271,9 @@ export function buildConversationItem(
       })
       .filter(Boolean);
     const paths = formattedChanges.join(", ");
+    const fallbackOutput = asString(
+      item.aggregatedOutput ?? item.output ?? "",
+    );
     const diffOutput = normalizedChanges
       .map((change) => change.diff ?? "")
       .filter(Boolean)
@@ -280,9 +283,9 @@ export function buildConversationItem(
       kind: "tool",
       toolType: type,
       title: "File changes",
-      detail: paths || "Pending changes",
+      detail: paths || (fallbackOutput ? "" : "Pending changes"),
       status: asString(item.status ?? ""),
-      output: diffOutput,
+      output: diffOutput || fallbackOutput,
       changes: normalizedChanges,
     };
   }
@@ -329,14 +332,15 @@ export function buildConversationItem(
     };
   }
   if (type === "webSearch") {
+    const output = asString(item.aggregatedOutput ?? item.output ?? "");
     return {
       id,
       kind: "tool",
       toolType: type,
       title: "Web search",
       detail: asString(item.query ?? ""),
-      status: "",
-      output: "",
+      status: asString(item.status ?? ""),
+      output,
     };
   }
   if (type === "imageView") {
@@ -504,13 +508,14 @@ const USER_DEDUPE_WINDOW = 6;
 
 /**
  * Check if a message is an optimistic user message created locally before server confirmation.
- * These have IDs like "1705934567890-user" (timestamp + "-user").
+ * These have IDs like "1705934567890-user" (timestamp + "-user") from addUserMessage,
+ * or "optimistic-user-1705934567890-abc123" from steer mode.
  */
 function isOptimisticUserMessage(item: ConversationItem): boolean {
   return (
     item.kind === "message" &&
     item.role === "user" &&
-    /^\d+-user$/.test(item.id)
+    (/^\d+-user$/.test(item.id) || /^optimistic-user-\d+-[a-z0-9]+$/.test(item.id))
   );
 }
 
@@ -663,6 +668,14 @@ function dedupeUserMessagesWithinWindow(
   return deduped;
 }
 
+function isSessionStoppedMessage(item: ConversationItem): boolean {
+  return (
+    item.kind === "message" &&
+    item.role === "assistant" &&
+    item.text.trim() === "Session stopped."
+  );
+}
+
 export function mergeThreadItems(
   remoteItems: ConversationItem[],
   localItems: ConversationItem[],
@@ -671,7 +684,17 @@ export function mergeThreadItems(
     return remoteItems;
   }
 
-  const localIds = new Set(localItems.map((item) => item.id));
+  // Filter out local-only "Session stopped." messages - they're transient UI
+  // indicators that shouldn't persist across thread switches/resumes.
+  const filteredLocalItems = localItems.filter(
+    (item) => !isSessionStoppedMessage(item),
+  );
+
+  if (!filteredLocalItems.length) {
+    return remoteItems;
+  }
+
+  const localIds = new Set(filteredLocalItems.map((item) => item.id));
   const remoteIds = new Set(remoteItems.map((item) => item.id));
   const byId = new Map(remoteItems.map((item) => [item.id, item]));
 
@@ -705,11 +728,11 @@ export function mergeThreadItems(
   }
 
   const merged = remoteItems.map((item) => {
-    const local = localItems.find((entry) => entry.id === item.id);
+    const local = filteredLocalItems.find((entry) => entry.id === item.id);
     return local ? chooseRicherItem(item, local) : item;
   });
 
-  for (const item of localItems) {
+  for (const item of filteredLocalItems) {
     if (byId.has(item.id)) {
       continue;
     }

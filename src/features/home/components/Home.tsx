@@ -14,11 +14,6 @@ type LatestAgentRun = {
 
 type UsageMetric = "tokens" | "time";
 
-type UsageWorkspaceOption = {
-  id: string;
-  label: string;
-};
-
 type HomeProps = {
   onOpenProject: () => void;
   onAddWorkspace: () => void;
@@ -30,9 +25,6 @@ type HomeProps = {
   onRefreshLocalUsage: () => void;
   usageMetric: UsageMetric;
   onUsageMetricChange: (metric: UsageMetric) => void;
-  usageWorkspaceId: string | null;
-  usageWorkspaceOptions: UsageWorkspaceOption[];
-  onUsageWorkspaceChange: (workspaceId: string | null) => void;
   onSelectThread: (workspaceId: string, threadId: string) => void;
 };
 
@@ -47,9 +39,6 @@ export function Home({
   onRefreshLocalUsage,
   usageMetric,
   onUsageMetricChange,
-  usageWorkspaceId,
-  usageWorkspaceOptions,
-  onUsageWorkspaceChange,
   onSelectThread,
 }: HomeProps) {
   const formatCompactNumber = (value: number | null | undefined) => {
@@ -293,26 +282,6 @@ export function Home({
           </div>
         </div>
         <div className="home-usage-controls">
-          <div className="home-usage-control-group">
-            <span className="home-usage-control-label">Workspace</span>
-            <div className="home-usage-select-wrap">
-              <select
-                className="home-usage-select"
-                value={usageWorkspaceId ?? ""}
-                onChange={(event) =>
-                  onUsageWorkspaceChange(event.target.value || null)
-                }
-                disabled={usageWorkspaceOptions.length === 0}
-              >
-                <option value="">All workspaces</option>
-                {usageWorkspaceOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
           <div className="home-usage-control-group">
             <span className="home-usage-control-label">View</span>
             <div className="home-usage-toggle" role="group" aria-label="Usage view">

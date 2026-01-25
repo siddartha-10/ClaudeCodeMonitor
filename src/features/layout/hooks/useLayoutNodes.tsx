@@ -21,8 +21,8 @@ import { TerminalPanel } from "../../terminal/components/TerminalPanel";
 import type { ApprovalRuleInfo } from "../../../utils/approvalRules";
 import type {
   AccessMode,
-  ApprovalRequest,
   BranchInfo,
+  ClaudeTask,
   CollaborationModeOption,
   ConversationItem,
   ComposerEditorSettings,
@@ -40,6 +40,8 @@ import type {
   PermissionDenial,
   QueuedMessage,
   RateLimitSnapshot,
+  RequestUserInputRequest,
+  RequestUserInputResponse,
   SkillOption,
   ThreadSummary,
   ThreadTokenUsage,
@@ -105,21 +107,21 @@ type LayoutNodesOptions = {
   activeItems: ConversationItem[];
   activeRateLimits: RateLimitSnapshot | null;
   codeBlockCopyUseModifier: boolean;
-  approvals: ApprovalRequest[];
   permissionDenials: PermissionDenial[];
-  handleApprovalDecision: (
-    request: ApprovalRequest,
-    decision: "accept" | "decline",
-  ) => void;
-  handleApprovalRemember: (
-    request: ApprovalRequest,
-    ruleInfo: ApprovalRuleInfo,
-  ) => void;
+  userInputRequests: RequestUserInputRequest[];
   handlePermissionRemember: (
     denial: PermissionDenial,
     ruleInfo: ApprovalRuleInfo,
   ) => void;
+  handlePermissionRetry: (
+    denial: PermissionDenial,
+    ruleInfo: ApprovalRuleInfo,
+  ) => void;
   handlePermissionDismiss: (denial: PermissionDenial) => void;
+  handleUserInputSubmit: (
+    request: RequestUserInputRequest,
+    response: RequestUserInputResponse,
+  ) => void;
   onOpenSettings: () => void;
   onOpenDictationSettings?: () => void;
   onOpenDebug: () => void;
@@ -169,9 +171,6 @@ type LayoutNodesOptions = {
   onRefreshLocalUsage: () => void;
   usageMetric: "tokens" | "time";
   onUsageMetricChange: (metric: "tokens" | "time") => void;
-  usageWorkspaceId: string | null;
-  usageWorkspaceOptions: Array<{ id: string; label: string }>;
-  onUsageWorkspaceChange: (workspaceId: string | null) => void;
   onSelectHomeThread: (workspaceId: string, threadId: string) => void;
   activeWorkspace: WorkspaceInfo | null;
   activeParentWorkspace: WorkspaceInfo | null;
@@ -188,9 +187,9 @@ type LayoutNodesOptions = {
   mainHeaderActionsNode?: ReactNode;
   centerMode: "chat" | "diff";
   onExitDiff: () => void;
-  activeTab: "projects" | "codex" | "git" | "log";
-  onSelectTab: (tab: "projects" | "codex" | "git" | "log") => void;
-  tabletNavTab: "codex" | "git" | "log";
+  activeTab: "projects" | "claude" | "git" | "log";
+  onSelectTab: (tab: "projects" | "claude" | "git" | "log") => void;
+  tabletNavTab: "claude" | "git" | "log";
   gitPanelMode: "diff" | "log" | "issues" | "prs";
   onGitPanelModeChange: (mode: "diff" | "log" | "issues" | "prs") => void;
   gitDiffViewStyle: "split" | "unified";
@@ -352,6 +351,7 @@ type LayoutNodesOptions = {
   showComposer: boolean;
   composerSendLabel?: string;
   plan: TurnPlan | null;
+  claudeTasks?: ClaudeTask[];
   debugEntries: DebugEntry[];
   debugOpen: boolean;
   terminalOpen: boolean;
@@ -401,7 +401,7 @@ type LayoutNodesResult = {
   debugPanelNode: ReactNode;
   debugPanelFullNode: ReactNode;
   terminalDockNode: ReactNode;
-  compactEmptyCodexNode: ReactNode;
+  compactEmptyClaudeNode: ReactNode;
   compactEmptyGitNode: ReactNode;
   compactGitBackNode: ReactNode;
 };
@@ -463,8 +463,11 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
     <Messages
       items={options.activeItems}
       threadId={options.activeThreadId ?? null}
+      workspaceId={options.activeWorkspace?.id ?? null}
       workspacePath={options.activeWorkspace?.path ?? null}
       codeBlockCopyUseModifier={options.codeBlockCopyUseModifier}
+      userInputRequests={options.userInputRequests}
+      onUserInputSubmit={options.handleUserInputSubmit}
       isThinking={
         options.activeThreadId
           ? options.threadStatusById[options.activeThreadId]?.isProcessing ?? false
@@ -536,12 +539,10 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
 
   const approvalToastsNode = (
     <ApprovalToasts
-      approvals={options.approvals}
       permissionDenials={options.permissionDenials}
       workspaces={options.workspaces}
-      onDecision={options.handleApprovalDecision}
-      onRemember={options.handleApprovalRemember}
       onPermissionRemember={options.handlePermissionRemember}
+      onPermissionRetry={options.handlePermissionRetry}
       onPermissionDismiss={options.handlePermissionDismiss}
     />
   );
@@ -566,9 +567,6 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       onRefreshLocalUsage={options.onRefreshLocalUsage}
       usageMetric={options.usageMetric}
       onUsageMetricChange={options.onUsageMetricChange}
-      usageWorkspaceId={options.usageWorkspaceId}
-      usageWorkspaceOptions={options.usageWorkspaceOptions}
-      onUsageWorkspaceChange={options.onUsageWorkspaceChange}
       onSelectThread={options.onSelectHomeThread}
     />
   );
@@ -787,7 +785,13 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
     />
   );
 
-  const planPanelNode = <PlanPanel plan={options.plan} isProcessing={options.isProcessing} />;
+  const planPanelNode = (
+    <PlanPanel
+      plan={options.plan}
+      tasks={options.claudeTasks}
+      isProcessing={options.isProcessing}
+    />
+  );
 
   const terminalPanelNode = options.terminalState ? (
     <TerminalPanel
@@ -830,7 +834,7 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
     />
   );
 
-  const compactEmptyCodexNode = (
+  const compactEmptyClaudeNode = (
     <div className="compact-empty">
       <h3>No workspace selected</h3>
       <p>Choose a project to start chatting.</p>
@@ -875,7 +879,7 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
     debugPanelNode,
     debugPanelFullNode,
     terminalDockNode,
-    compactEmptyCodexNode,
+    compactEmptyClaudeNode,
     compactEmptyGitNode,
     compactGitBackNode,
   };

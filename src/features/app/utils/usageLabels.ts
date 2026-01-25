@@ -4,10 +4,13 @@ import { formatRelativeTime } from "../../../utils/time";
 type UsageLabels = {
   sessionPercent: number | null;
   weeklyPercent: number | null;
+  sonnetPercent: number | null;
   sessionResetLabel: string | null;
   weeklyResetLabel: string | null;
+  sonnetResetLabel: string | null;
   creditsLabel: string | null;
   showWeekly: boolean;
+  showSonnet: boolean;
 };
 
 const clampPercent = (value: number) =>
@@ -51,19 +54,27 @@ export function getUsageLabels(
 ): UsageLabels {
   const usagePercent = accountRateLimits?.primary?.usedPercent;
   const globalUsagePercent = accountRateLimits?.secondary?.usedPercent;
+  const sonnetUsagePercent = accountRateLimits?.sonnet?.usedPercent;
   const sessionPercent =
     typeof usagePercent === "number" ? clampPercent(usagePercent) : null;
   const weeklyPercent =
     typeof globalUsagePercent === "number"
       ? clampPercent(globalUsagePercent)
       : null;
+  const sonnetPercent =
+    typeof sonnetUsagePercent === "number"
+      ? clampPercent(sonnetUsagePercent)
+      : null;
 
   return {
     sessionPercent,
     weeklyPercent,
+    sonnetPercent,
     sessionResetLabel: formatResetLabel(accountRateLimits?.primary?.resetsAt),
     weeklyResetLabel: formatResetLabel(accountRateLimits?.secondary?.resetsAt),
+    sonnetResetLabel: formatResetLabel(accountRateLimits?.sonnet?.resetsAt),
     creditsLabel: formatCreditsLabel(accountRateLimits),
     showWeekly: Boolean(accountRateLimits?.secondary),
+    showSonnet: Boolean(accountRateLimits?.sonnet),
   };
 }

@@ -48,7 +48,7 @@ describe("useAppServerEvents", () => {
       onAppServerEvent: vi.fn(),
       onWorkspaceConnected: vi.fn(),
       onAgentMessageDelta: vi.fn(),
-      onApprovalRequest: vi.fn(),
+      onRequestUserInput: vi.fn(),
       onItemCompleted: vi.fn(),
       onAgentMessageCompleted: vi.fn(),
     };
@@ -81,17 +81,47 @@ describe("useAppServerEvents", () => {
       listener?.({
         workspace_id: "ws-1",
         message: {
-          method: "workspace/requestApproval",
-          id: 7,
-          params: { mode: "full" },
+          method: "item/tool/requestUserInput",
+          id: 11,
+          params: {
+            thread_id: "thread-1",
+            turn_id: "turn-1",
+            item_id: "call-1",
+            questions: [
+              {
+                id: "confirm_path",
+                header: "Confirm",
+                question: "Proceed?",
+                options: [
+                  { label: "Yes", description: "Continue." },
+                  { label: "No", description: "Stop." },
+                ],
+              },
+            ],
+          },
         },
       });
     });
-    expect(handlers.onApprovalRequest).toHaveBeenCalledWith({
+    expect(handlers.onRequestUserInput).toHaveBeenCalledWith({
       workspace_id: "ws-1",
-      request_id: 7,
-      method: "workspace/requestApproval",
-      params: { mode: "full" },
+      request_id: 11,
+      params: {
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        item_id: "call-1",
+        tool_use_id: "",
+        questions: [
+          {
+            id: "confirm_path",
+            header: "Confirm",
+            question: "Proceed?",
+            options: [
+              { label: "Yes", description: "Continue." },
+              { label: "No", description: "Stop." },
+            ],
+          },
+        ],
+      },
     });
 
     act(() => {
@@ -122,6 +152,75 @@ describe("useAppServerEvents", () => {
       root.unmount();
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes request user input questions and options", async () => {
+    const handlers: Handlers = {
+      onRequestUserInput: vi.fn(),
+    };
+    const { root } = await mount(handlers);
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-9",
+        message: {
+          method: "item/tool/requestUserInput",
+          id: 55,
+          params: {
+            threadId: "thread-9",
+            turnId: "turn-9",
+            itemId: "item-9",
+            questions: [
+              {
+                id: "",
+                header: "",
+                question: "",
+                options: [
+                  { label: "", description: "" },
+                  { label: "  ", description: " " },
+                ],
+              },
+              {
+                id: "q-1",
+                header: "",
+                question: "Choose",
+                options: [
+                  { label: "", description: "" },
+                  { label: "Yes", description: "" },
+                  { label: "", description: "No label" },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    });
+
+    expect(handlers.onRequestUserInput).toHaveBeenCalledWith({
+      workspace_id: "ws-9",
+      request_id: 55,
+      params: {
+        thread_id: "thread-9",
+        turn_id: "turn-9",
+        item_id: "item-9",
+        tool_use_id: "",
+        questions: [
+          {
+            id: "q-1",
+            header: "",
+            question: "Choose",
+            options: [
+              { label: "Yes", description: "" },
+              { label: "", description: "No label" },
+            ],
+          },
+        ],
+      },
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
   });
 
   it("ignores delta events missing required fields", async () => {

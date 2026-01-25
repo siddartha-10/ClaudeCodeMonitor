@@ -6,7 +6,7 @@ import {
   getGitLog,
   getGitStatus,
   stageGitAll,
-  respondToServerRequest,
+  respondToUserInputRequest,
   sendUserMessage,
   startReview,
 } from "./tauri";
@@ -126,16 +126,44 @@ describe("tauri invoke wrappers", () => {
     });
   });
 
-  it("nests decisions for server request responses", async () => {
+  it("nests answers for user input responses", async () => {
     const invokeMock = vi.mocked(invoke);
     invokeMock.mockResolvedValueOnce({});
 
-    await respondToServerRequest("ws-6", 101, "accept");
+    await respondToUserInputRequest("ws-7", "thread-7", "toolu_456", {
+      confirm_path: { answers: ["Yes"] },
+    });
 
     expect(invokeMock).toHaveBeenCalledWith("respond_to_server_request", {
-      workspaceId: "ws-6",
-      requestId: 101,
-      result: { decision: "accept" },
+      workspaceId: "ws-7",
+      threadId: "thread-7",
+      toolUseId: "toolu_456",
+      result: {
+        answers: {
+          confirm_path: { answers: ["Yes"] },
+        },
+      },
+    });
+  });
+
+  it("passes through multiple user input answers", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockResolvedValueOnce({});
+
+    const answers = {
+      confirm_path: { answers: ["Yes"] },
+      notes: { answers: ["First line", "Second line"] },
+    };
+
+    await respondToUserInputRequest("ws-8", "thread-8", "toolu_789", answers);
+
+    expect(invokeMock).toHaveBeenCalledWith("respond_to_server_request", {
+      workspaceId: "ws-8",
+      threadId: "thread-8",
+      toolUseId: "toolu_789",
+      result: {
+        answers,
+      },
     });
   });
 });

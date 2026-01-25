@@ -1,7 +1,9 @@
 use chrono::DateTime;
+use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -10,9 +12,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, State};
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
-use tokio::sync::{watch, Mutex};
+use tokio::process::Command;
+use tokio::sync::watch;
 use tokio::time::{interval, sleep, timeout};
 use uuid::Uuid;
+
+
 
 pub(crate) use crate::backend::claude_cli::WorkspaceSession;
 use crate::backend::claude_cli::{
@@ -20,7 +25,7 @@ use crate::backend::claude_cli::{
     spawn_workspace_session as spawn_workspace_session_inner,
 };
 use crate::backend::events::{AppServerEvent, EventSink};
-use crate::codex_home::{resolve_default_claude_home, resolve_workspace_claude_home};
+use crate::claude_home::{resolve_default_claude_home, resolve_workspace_claude_home};
 use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
 use crate::state::{AppState, WorkspaceWatcher};
@@ -46,6 +51,18 @@ struct ClaudeSessionEntry {
     #[serde(rename = "isSidechain")]
     #[allow(dead_code)]
     is_sidechain: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCredentials {
+    claude_ai_oauth: Option<ClaudeOauth>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeOauth {
+    access_token: String,
 }
 
 pub(crate) async fn spawn_workspace_session(
@@ -347,17 +364,30 @@ pub(crate) async fn send_user_message(
         return Err("empty user message".to_string());
     }
 
-    run_claude_turn(
+    let event_sink = TauriEventSink::new(app.clone());
+
+    // Ensure persistent session exists and get turn_id
+    let turn_id = ensure_persistent_session(
         &workspace_id,
-        session,
-        app,
+        &session,
         &thread_id,
-        prompt,
-        model,
-        access_mode,
-        effort,
-    )
-    .await
+        model.as_deref(),
+        access_mode.as_deref(),
+        None, // max_thinking_tokens - use default
+        event_sink,
+    ).await?;
+
+    // Set the pending turn ID so the reader knows which turn_id to use
+    session.set_pending_turn_id(&thread_id, turn_id.clone()).await;
+
+    // Send the user message via stdin
+    session.send_message(&thread_id, &prompt).await?;
+
+    Ok(json!({
+        "result": {
+            "turn": { "id": turn_id, "threadId": thread_id }
+        }
+    }))
 }
 
 #[tauri::command]
@@ -436,17 +466,30 @@ pub(crate) async fn start_review(
     drop(sessions);
 
     let prompt = build_review_prompt(&workspace_id, &target, &state).await?;
-    run_claude_turn(
+    let event_sink = TauriEventSink::new(app.clone());
+
+    // Ensure persistent session exists and get turn_id
+    let turn_id = ensure_persistent_session(
         &workspace_id,
-        session,
-        app,
+        &session,
         &thread_id,
-        prompt,
         None,
-        Some("read-only".to_string()),
-        None,
-    )
-    .await
+        None, // access_mode - use default
+        None, // max_thinking_tokens - use default
+        event_sink,
+    ).await?;
+
+    // Set the pending turn ID so the reader knows which turn_id to use
+    session.set_pending_turn_id(&thread_id, turn_id.clone()).await;
+
+    // Send the review prompt via stdin
+    session.send_message(&thread_id, &prompt).await?;
+
+    Ok(json!({
+        "result": {
+            "turn": { "id": turn_id, "threadId": thread_id }
+        }
+    }))
 }
 
 #[tauri::command]
@@ -490,22 +533,63 @@ pub(crate) async fn model_list(
 }
 
 #[tauri::command]
-pub(crate) async fn account_rate_limits(
-    workspace_id: String,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<Value, String> {
-    if remote_backend::is_remote_mode(&*state).await {
-        return remote_backend::call_remote(
-            &*state,
-            app,
-            "account_rate_limits",
-            json!({ "workspaceId": workspace_id }),
-        )
-        .await;
-    }
+pub(crate) async fn global_rate_limits() -> Result<Value, String> {
+    let token = match read_oauth_token().await {
+        Some(t) => t,
+        None => return Ok(json!({ "rateLimits": null })),
+    };
+    let usage: Value = Client::new()
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let window = |key: &str| -> Option<Value> {
+        let w = usage.get(key)?;
+        let pct = w.get("utilization")?.as_f64()?;
+        let resets = w.get("resets_at").and_then(|v| v.as_str()).and_then(|s| {
+            DateTime::parse_from_rfc3339(s).ok().map(|t| t.timestamp_millis())
+        });
+        Some(json!({ "usedPercent": pct, "resetsAt": resets }))
+    };
+    Ok(json!({
+        "rateLimits": {
+            "primary": window("five_hour"),
+            "secondary": window("seven_day"),
+            "sonnet": window("seven_day_sonnet"),
+        }
+    }))
+}
 
-    Ok(json!({ "rateLimits": {} }))
+#[cfg(target_os = "macos")]
+async fn read_oauth_token() -> Option<String> {
+    let user = env::var("USER").unwrap_or_default();
+    let output = Command::new("security")
+        .args(["find-generic-password", "-a", &user, "-s", "Claude Code-credentials", "-w"])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let creds: ClaudeCredentials = serde_json::from_str(raw.trim()).ok()?;
+    Some(creds.claude_ai_oauth?.access_token)
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn read_oauth_token() -> Option<String> {
+    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).ok()?;
+    let path = PathBuf::from(home).join(".claude").join(".credentials.json");
+    let raw = fs::read_to_string(&path).ok()?;
+    let creds: ClaudeCredentials = serde_json::from_str(&raw).ok()?;
+    Some(creds.claude_ai_oauth?.access_token)
 }
 
 #[tauri::command]
@@ -530,8 +614,9 @@ pub(crate) async fn skills_list(
 #[tauri::command]
 pub(crate) async fn respond_to_server_request(
     workspace_id: String,
-    request_id: u64,
-    _result: Value,
+    thread_id: String,
+    tool_use_id: String,
+    result: Value,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -540,11 +625,18 @@ pub(crate) async fn respond_to_server_request(
             &*state,
             app,
             "respond_to_server_request",
-            json!({ "workspaceId": workspace_id, "requestId": request_id }),
+            json!({ "workspaceId": workspace_id, "threadId": thread_id, "toolUseId": tool_use_id, "result": result }),
         )
         .await?;
+        return Ok(());
     }
-    Ok(())
+
+    let sessions = state.sessions.lock().await;
+    let session = sessions
+        .get(&workspace_id)
+        .ok_or("workspace not connected")?;
+
+    session.send_response(&thread_id, tool_use_id, result).await
 }
 
 /// Gets the diff content for commit message generation
@@ -754,421 +846,6 @@ fn build_prompt_with_images(text: String, images: Option<Vec<String>>) -> String
     prompt
 }
 
-async fn run_claude_turn(
-    workspace_id: &str,
-    session: Arc<WorkspaceSession>,
-    app: AppHandle,
-    thread_id: &str,
-    prompt: String,
-    model: Option<String>,
-    access_mode: Option<String>,
-    _effort: Option<String>,
-) -> Result<Value, String> {
-    let turn_id = Uuid::new_v4().to_string();
-    let mut item_id = format!("{turn_id}-assistant");
-    let event_sink = TauriEventSink::new(app.clone());
-
-    emit_event(
-        &event_sink,
-        workspace_id,
-        "turn/started",
-        json!({
-            "threadId": thread_id,
-            "turn": { "id": turn_id, "threadId": thread_id },
-        }),
-    );
-    emit_event(
-        &event_sink,
-        workspace_id,
-        "item/started",
-        json!({
-            "threadId": thread_id,
-            "item": { "id": item_id, "type": "agentMessage", "text": "" },
-        }),
-    );
-
-    let mut command = build_claude_command_with_bin(session.claude_bin.clone());
-    command.current_dir(&session.entry.path);
-    command.arg("-p").arg(prompt);
-    command.arg("--output-format").arg("stream-json");
-    command.arg("--verbose");
-    command.arg("--include-partial-messages");
-    command.arg("--max-thinking-tokens").arg("31999");
-    command.arg("--add-dir").arg(&session.entry.path);
-
-    if let Some(model) = model {
-        if !model.trim().is_empty() {
-            command.arg("--model").arg(model);
-        }
-    }
-
-    let access_mode = access_mode.unwrap_or_else(|| "current".to_string());
-    if access_mode == "full-access" {
-        command.arg("--permission-mode").arg("bypassPermissions");
-    } else if access_mode == "read-only" {
-        command.arg("--allowed-tools").arg("Read,Glob,Grep");
-    }
-
-    if session_exists(&session.entry, thread_id) {
-        command.arg("--resume").arg(thread_id);
-    } else {
-        command.arg("--session-id").arg(thread_id);
-    }
-
-    command.stdout(std::process::Stdio::piped());
-    command.stderr(std::process::Stdio::piped());
-
-    let child = command.spawn().map_err(|err| err.to_string())?;
-    let child = Arc::new(Mutex::new(child));
-    session
-        .track_turn(thread_id.to_string(), turn_id.clone(), child.clone())
-        .await;
-
-    let (stdout, stderr) = {
-        let mut guard = child.lock().await;
-        let stdout = guard.stdout.take().ok_or("missing stdout")?;
-        let stderr = guard.stderr.take().ok_or("missing stderr")?;
-        (stdout, stderr)
-    };
-
-    let stderr_handle = tokio::spawn(async move {
-        let mut output = String::new();
-        let mut reader = AsyncBufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            output.push_str(&line);
-            output.push('\n');
-        }
-        output
-    });
-
-    let mut reader = AsyncBufReader::new(stdout).lines();
-    let mut full_text = String::new();
-    let mut last_text = String::new();
-    let mut last_usage: Option<Value> = None;
-    let mut last_model_usage: Option<Value> = None;
-    let mut last_model: Option<String> = None;
-    let mut tool_names: HashMap<String, String> = HashMap::new();
-    let mut tool_inputs: HashMap<String, Value> = HashMap::new();
-    let mut tool_counter: usize = 0;
-    let mut thinking_counter: usize = 0;
-    let mut subagent_tool_ids: HashSet<String> = HashSet::new();
-    let mut permission_denials_emitted = false;
-    while let Ok(Some(line)) = reader.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        // Skip subagent events - they have parent_tool_use_id set
-        if value.get("parent_tool_use_id").and_then(|v| v.as_str()).is_some() {
-            continue;
-        }
-        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        if event_type == "assistant" {
-            if let Some(uuid) = value.get("uuid").and_then(|v| v.as_str()) {
-                if !uuid.is_empty() {
-                    item_id = uuid.to_string();
-                }
-            }
-            if let Some(message) = value.get("message") {
-                if let Some(model) = message.get("model").and_then(|v| v.as_str()) {
-                    if !model.trim().is_empty() {
-                        last_model = Some(model.to_string());
-                    }
-                }
-                if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
-                    for entry in content {
-                        let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if entry_type == "thinking" {
-                            if let Some(thinking) = entry.get("thinking").and_then(|v| v.as_str()) {
-                                let trimmed = thinking.trim();
-                                if !trimmed.is_empty() {
-                                    thinking_counter += 1;
-                                    let thinking_id = format!("{item_id}-thinking-{thinking_counter}");
-                                    emit_event(
-                                        &event_sink,
-                                        workspace_id,
-                                        "item/started",
-                                        json!({
-                                            "threadId": thread_id,
-                                            "item": {
-                                                "id": thinking_id,
-                                                "type": "reasoning",
-                                                "summary": "",
-                                                "content": trimmed,
-                                            }
-                                        }),
-                                    );
-                                }
-                            }
-                            continue;
-                        }
-                        if entry_type != "tool_use" {
-                            continue;
-                        }
-                        let tool_id = entry
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let tool_name = entry
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Tool")
-                            .to_string();
-                        let tool_input = entry.get("input").cloned().unwrap_or(Value::Null);
-                        let is_subagent_tool = is_subagent_task(&tool_name, &tool_input);
-                        if !tool_id.is_empty() {
-                            tool_names.insert(tool_id.to_string(), tool_name.clone());
-                            tool_inputs.insert(tool_id.to_string(), tool_input.clone());
-                            if is_subagent_tool {
-                                subagent_tool_ids.insert(tool_id.to_string());
-                            }
-                        }
-                        let item_id = if tool_id.is_empty() {
-                            tool_counter += 1;
-                            format!("{turn_id}-tool-{tool_counter}")
-                        } else {
-                            tool_id.to_string()
-                        };
-                        emit_event(
-                            &event_sink,
-                            workspace_id,
-                            "item/started",
-                            json!({
-                                "threadId": thread_id,
-                                "item": {
-                                    "id": item_id,
-                                    "type": "commandExecution",
-                                    "command": [tool_name],
-                                    "status": "running",
-                                    "toolInput": tool_input,
-                                }
-                            }),
-                        );
-                    }
-                }
-                let text = extract_text_from_message(message);
-                if !text.is_empty() {
-                    full_text = text.clone();
-                    let delta = if full_text.starts_with(&last_text) {
-                        full_text[last_text.len()..].to_string()
-                    } else {
-                        full_text.clone()
-                    };
-                    if !delta.is_empty() {
-                        emit_event(
-                            &event_sink,
-                            workspace_id,
-                            "item/agentMessage/delta",
-                            json!({
-                                "threadId": thread_id,
-                                "itemId": item_id,
-                                "delta": delta,
-                            }),
-                        );
-                        last_text = full_text.clone();
-                    }
-                }
-                if let Some(usage) = message.get("usage") {
-                    last_usage = Some(usage.clone());
-                }
-            }
-        } else if event_type == "user" {
-            if let Some(message) = value.get("message") {
-                if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
-                    for entry in content {
-                        if entry.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
-                            continue;
-                        }
-                        let tool_use_id = entry
-                            .get("tool_use_id")
-                            .or_else(|| entry.get("toolUseId"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let content_value = entry.get("content").cloned().unwrap_or(Value::Null);
-                        let mut output = tool_result_output(&content_value);
-                        if output.trim().is_empty() {
-                            if let Some(fallback) = value
-                                .get("toolUseResult")
-                                .or_else(|| value.get("tool_use_result"))
-                            {
-                                output = fallback
-                                    .get("content")
-                                    .map(tool_result_output)
-                                    .unwrap_or_else(|| tool_result_output(fallback));
-                            }
-                        }
-                        let command = tool_names
-                            .get(tool_use_id)
-                            .cloned()
-                            .unwrap_or_else(|| "Tool".to_string());
-                        let tool_input = tool_inputs
-                            .get(tool_use_id)
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        output = collapse_subagent_output(output, &command, &tool_input, &value);
-                        let item_id = if tool_use_id.is_empty() {
-                            tool_counter += 1;
-                            format!("{turn_id}-tool-result-{tool_counter}")
-                        } else {
-                            tool_use_id.to_string()
-                        };
-                        emit_event(
-                            &event_sink,
-                            workspace_id,
-                            "item/completed",
-                            json!({
-                                "threadId": thread_id,
-                                "item": {
-                                    "id": item_id,
-                                    "type": "commandExecution",
-                                    "command": [command],
-                                    "status": "completed",
-                                    "aggregatedOutput": output,
-                                    "toolInput": tool_input,
-                                }
-                            }),
-                        );
-                    }
-                }
-            }
-        } else if event_type == "result" {
-            if let Some(usage) = value.get("usage") {
-                last_usage = Some(usage.clone());
-            }
-            if let Some(model_usage) = value.get("modelUsage") {
-                last_model_usage = Some(model_usage.clone());
-            }
-            if !permission_denials_emitted {
-                let denials = value
-                    .get("permission_denials")
-                    .or_else(|| value.get("permissionDenials"))
-                    .and_then(|item| item.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|entry| {
-                                let tool_name = entry
-                                    .get("tool_name")
-                                    .or_else(|| entry.get("toolName"))
-                                    .and_then(|item| item.as_str())?
-                                    .trim()
-                                    .to_string();
-                                if tool_name.is_empty() {
-                                    return None;
-                                }
-                                let tool_use_id = entry
-                                    .get("tool_use_id")
-                                    .or_else(|| entry.get("toolUseId"))
-                                    .and_then(|item| item.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let tool_input = entry
-                                    .get("tool_input")
-                                    .or_else(|| entry.get("toolInput"))
-                                    .cloned()
-                                    .unwrap_or(Value::Null);
-                                Some(json!({
-                                    "toolName": tool_name,
-                                    "toolUseId": tool_use_id,
-                                    "toolInput": tool_input,
-                                }))
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                if !denials.is_empty() {
-                    permission_denials_emitted = true;
-                    emit_event(
-                        &event_sink,
-                        workspace_id,
-                        "turn/permissionDenied",
-                        json!({
-                            "threadId": thread_id,
-                            "turnId": turn_id,
-                            "permissionDenials": denials,
-                        }),
-                    );
-                }
-            }
-        }
-    }
-
-    let status = {
-        let mut guard = child.lock().await;
-        guard.wait().await.map_err(|err| err.to_string())?
-    };
-
-    session.clear_turn(thread_id, &turn_id).await;
-
-    let stderr_output = stderr_handle
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if !status.success() {
-        emit_event(
-            &event_sink,
-            workspace_id,
-            "error",
-            json!({
-                "threadId": thread_id,
-                "turnId": turn_id,
-                "error": { "message": stderr_output.trim() },
-                "willRetry": false,
-            }),
-        );
-        return Err(if stderr_output.trim().is_empty() {
-            "Claude CLI failed to run".to_string()
-        } else {
-            stderr_output
-        });
-    }
-
-    if let Some(usage) = last_usage.and_then(|u| format_token_usage(u, last_model_usage.as_ref())) {
-        emit_event(
-            &event_sink,
-            workspace_id,
-            "thread/tokenUsage/updated",
-            json!({
-                "threadId": thread_id,
-                "tokenUsage": usage,
-            }),
-        );
-    }
-
-    emit_event(
-        &event_sink,
-        workspace_id,
-        "item/completed",
-        json!({
-            "threadId": thread_id,
-            "item": {
-                "id": item_id,
-                "type": "agentMessage",
-                "text": full_text,
-                "model": last_model,
-            },
-        }),
-    );
-    emit_event(
-        &event_sink,
-        workspace_id,
-        "turn/completed",
-        json!({
-            "threadId": thread_id,
-            "turn": { "id": turn_id, "threadId": thread_id },
-        }),
-    );
-
-    Ok(json!({
-        "result": {
-            "turn": { "id": turn_id, "threadId": thread_id }
-        }
-    }))
-}
-
 async fn run_claude_prompt_once(
     cwd: &str,
     claude_bin: Option<String>,
@@ -1225,10 +902,800 @@ async fn run_claude_prompt_once(
     Ok(message.trim().to_string())
 }
 
+/// Container for the stdout and stderr readers from a spawned persistent Claude CLI session.
+pub(crate) struct PersistentSessionReaders {
+    pub stdout: AsyncBufReader<tokio::process::ChildStdout>,
+    pub stderr: AsyncBufReader<tokio::process::ChildStderr>,
+}
+
+/// Spawns a persistent Claude CLI session with bidirectional streaming.
+///
+/// This function spawns Claude CLI with streaming JSON input/output format,
+/// allowing for continuous interaction without spawning new processes for each turn.
+///
+/// # Arguments
+/// * `session` - The workspace session containing entry and claude_bin information
+/// * `thread_id` - The thread/session ID for session persistence
+/// * `model` - Optional model to use
+/// * `access_mode` - Optional permission mode (e.g., "dontAsk", "askEdits", etc.)
+/// * `max_thinking_tokens` - Optional max thinking tokens for extended thinking
+///
+/// # Returns
+/// Readers for both stdout and stderr (the child process is stored in the session for cleanup)
+pub(crate) async fn spawn_persistent_claude_session(
+    session: &Arc<WorkspaceSession>,
+    thread_id: &str,
+    model: Option<&str>,
+    access_mode: Option<&str>,
+    max_thinking_tokens: Option<u32>,
+) -> Result<PersistentSessionReaders, String> {
+    let mut command = build_claude_command_with_bin(session.claude_bin.clone());
+    command.current_dir(&session.entry.path);
+
+    // Set up streaming JSON input/output format
+    command.arg("--print");
+    command.arg("--input-format").arg("stream-json");
+    command.arg("--output-format").arg("stream-json");
+    command.arg("--include-partial-messages");
+    command.arg("--verbose");
+
+    // Set model if specified
+    if let Some(model) = model {
+        if !model.trim().is_empty() {
+            command.arg("--model").arg(model);
+        }
+    }
+
+    // Set permission mode if specified
+    // Map UI access modes to valid Claude CLI permission modes:
+    // - "read-only" → "plan" (requires plan approval, safest)
+    // - "current" → skip (use CLI default)
+    // - "full-access" → "bypassPermissions" (bypass all permission checks)
+    // Also accept direct CLI modes: acceptEdits, bypassPermissions, default, delegate, dontAsk, plan
+    if let Some(mode) = access_mode {
+        let mode_trimmed = mode.trim();
+        let mapped_mode = match mode_trimmed {
+            "read-only" => Some("plan"),
+            "full-access" => Some("bypassPermissions"),
+            "current" => None, // Use CLI default
+            // Direct CLI modes pass through
+            "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan" => Some(mode_trimmed),
+            _ => None, // Unknown modes are ignored
+        };
+        if let Some(cli_mode) = mapped_mode {
+            command.arg("--permission-mode").arg(cli_mode);
+        }
+    }
+
+    // Set max thinking tokens (default to 31999, Claude's default)
+    let thinking_tokens = max_thinking_tokens.unwrap_or(31999);
+    command.arg("--max-thinking-tokens").arg(thinking_tokens.to_string());
+
+    // Use --resume if session exists, otherwise --session-id
+    if session_exists(&session.entry, thread_id) {
+        command.arg("--resume").arg(thread_id);
+    } else {
+        command.arg("--session-id").arg(thread_id);
+    }
+
+    // Configure stdio for bidirectional communication
+    command.stdin(std::process::Stdio::piped());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+
+    // Spawn the process
+    let mut child = command.spawn().map_err(|err| {
+        format!("Failed to spawn Claude CLI: {}", err)
+    })?;
+
+    // Take stdin for bidirectional communication
+    let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
+
+    // Take stdout for reading responses
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stdout_reader = AsyncBufReader::new(stdout);
+
+    // Take stderr for reading error messages
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    let stderr_reader = AsyncBufReader::new(stderr);
+
+    // Store the persistent session for this thread (stdin + child + permission_mode + model)
+    // Convert access_mode to the CLI permission mode for storage
+    let stored_permission_mode = access_mode.map(|mode| {
+        match mode {
+            "read-only" => "plan".to_string(),
+            "full-access" => "bypassPermissions".to_string(),
+            "current" => "default".to_string(),
+            other => other.to_string(),
+        }
+    });
+    // Store the model for detecting changes
+    let stored_model = model.map(|m| m.to_string());
+    session.set_persistent_session(thread_id.to_string(), stdin, child, stored_permission_mode, stored_model).await;
+
+    Ok(PersistentSessionReaders {
+        stdout: stdout_reader,
+        stderr: stderr_reader,
+    })
+}
+
+/// Ensures a persistent session exists for the given workspace and thread.
+/// If no session exists for this thread, spawns one and starts the background stdout reader.
+///
+/// Each thread gets its own persistent session, allowing multiple threads to run in parallel.
+/// Uses locking to prevent race conditions where multiple concurrent callers could
+/// spawn duplicate sessions for the same thread.
+///
+/// Returns the turn_id for the current turn.
+async fn ensure_persistent_session(
+    workspace_id: &str,
+    session: &Arc<WorkspaceSession>,
+    thread_id: &str,
+    model: Option<&str>,
+    access_mode: Option<&str>,
+    max_thinking_tokens: Option<u32>,
+    event_sink: TauriEventSink,
+) -> Result<String, String> {
+    // Acquire the session initialization lock to prevent race conditions
+    let _init_guard = session.session_init_lock.lock().await;
+
+    // Convert requested access_mode to CLI permission mode for comparison
+    let requested_permission_mode = access_mode.map(|mode| {
+        match mode {
+            "read-only" => "plan".to_string(),
+            "full-access" => "bypassPermissions".to_string(),
+            "current" => "default".to_string(),
+            other => other.to_string(),
+        }
+    });
+
+    // Convert requested model for comparison (normalize empty strings to None)
+    let requested_model = model
+        .filter(|m| !m.trim().is_empty())
+        .map(|m| m.to_string());
+
+    // Check if a persistent session already exists for THIS thread
+    if session.has_persistent_session(thread_id).await {
+        // Check if permission mode changed - if so, we need to restart the session
+        let current_permission_mode = session.get_persistent_session_permission_mode(thread_id).await;
+        let current_model = session.get_persistent_session_model(thread_id).await;
+
+        // Only restart if the requested mode is different from the current mode
+        // (treating None as equivalent to "default" for comparison)
+        let current_mode = current_permission_mode.as_deref().unwrap_or("default");
+        let requested_mode = requested_permission_mode.as_deref().unwrap_or("default");
+
+        let permission_mode_changed = current_mode != requested_mode;
+        let model_changed = current_model != requested_model;
+
+        if permission_mode_changed {
+            // Permission mode changed - kill the old session and spawn a new one
+            // This follows Claude CLI behavior: permission mode is per-process,
+            // so changing it requires starting a new process with --resume
+            eprintln!(
+                "[ensure_persistent_session] Permission mode changed from '{}' to '{}' for thread {}, restarting session",
+                current_mode, requested_mode, thread_id
+            );
+            session.kill_persistent_session(thread_id).await?;
+        } else if model_changed {
+            // Model changed - kill the old session and spawn a new one
+            // This follows Claude CLI behavior: model is per-process,
+            // so changing it requires starting a new process with --resume --model
+            eprintln!(
+                "[ensure_persistent_session] Model changed from '{:?}' to '{:?}' for thread {}, restarting session",
+                current_model, requested_model, thread_id
+            );
+            session.kill_persistent_session(thread_id).await?;
+        } else {
+            // Session exists with same permission mode and model, just return a new turn_id
+            return Ok(Uuid::new_v4().to_string());
+        }
+    }
+
+    let turn_id = Uuid::new_v4().to_string();
+
+    // Spawn a new persistent session for this thread
+    let readers = spawn_persistent_claude_session(session, thread_id, model, access_mode, max_thinking_tokens).await?;
+
+    // Spawn background task to read stdout and emit events
+    let workspace_id_owned = workspace_id.to_string();
+    let thread_id_owned = thread_id.to_string();
+    let turn_id_clone = turn_id.clone();
+    let event_sink_clone = event_sink.clone();
+    let session_clone = Arc::clone(session);
+    tokio::spawn(async move {
+        read_persistent_stdout(
+            readers.stdout,
+            workspace_id_owned,
+            thread_id_owned,
+            turn_id_clone,
+            session_clone,
+            event_sink_clone,
+        ).await;
+    });
+
+    // Spawn background task to read stderr and emit error events
+    let workspace_id_for_stderr = workspace_id.to_string();
+    let thread_id_for_stderr = thread_id.to_string();
+    let session_for_stderr = Arc::clone(session);
+    tokio::spawn(async move {
+        read_persistent_stderr(
+            readers.stderr,
+            workspace_id_for_stderr,
+            thread_id_for_stderr,
+            session_for_stderr,
+            event_sink,
+        ).await;
+    });
+
+    Ok(turn_id)
+}
+
+/// Background task that reads stdout from the persistent Claude CLI session
+/// and emits events to the frontend.
+async fn read_persistent_stdout(
+    mut reader: AsyncBufReader<tokio::process::ChildStdout>,
+    workspace_id: String,
+    thread_id: String,
+    initial_turn_id: String,
+    session: Arc<WorkspaceSession>,
+    event_sink: TauriEventSink,
+) {
+    let mut current_turn_id = initial_turn_id;
+    let mut item_id = format!("{current_turn_id}-assistant");
+    let mut full_text = String::new();
+    let mut last_text = String::new();
+    let mut last_usage: Option<Value> = None;
+    let mut last_model_usage: Option<Value> = None;
+    let mut last_model: Option<String> = None;
+    let mut tool_names: HashMap<String, String> = HashMap::new();
+    let mut tool_inputs: HashMap<String, Value> = HashMap::new();
+    let mut tool_counter: usize = 0;
+    let mut thinking_counter: usize = 0;
+    let mut request_id_counter: u64 = 0;
+    let mut permission_denial_ids: HashSet<String> = HashSet::new();
+    let mut turn_active = false;
+
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                // EOF - process ended
+                if turn_active {
+                    emit_event(
+                        &event_sink,
+                        &workspace_id,
+                        "turn/completed",
+                        json!({
+                            "threadId": thread_id,
+                            "turn": { "id": current_turn_id, "threadId": thread_id },
+                        }),
+                    );
+                }
+                break;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let value: Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                // Skip subagent events - they have parent_tool_use_id set
+                if value.get("parent_tool_use_id").and_then(|v| v.as_str()).is_some() {
+                    continue;
+                }
+
+                let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let subtype = value.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
+
+                // Handle system init event
+                if event_type == "system" {
+                    if subtype == "init" {
+                        // Extract session info from init event
+                        let session_id = value
+                            .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&thread_id);
+                        let model = value
+                            .get("model")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let tools = value
+                            .get("tools")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>());
+
+                        // Emit session initialized event
+                        emit_event(
+                            &event_sink,
+                            &workspace_id,
+                            "session/initialized",
+                            json!({
+                                "threadId": thread_id,
+                                "sessionId": session_id,
+                                "model": model,
+                                "tools": tools,
+                            }),
+                        );
+                        continue;
+                    }
+                }
+
+                // Start a new turn if we receive an assistant message and no turn is active
+                if event_type == "assistant" && !turn_active {
+                    turn_active = true;
+                    // Use pending_turn_id from session if available, otherwise generate new one
+                    // This ensures turn_id returned by send_user_message matches emitted events
+                    current_turn_id = session
+                        .take_pending_turn_id(&thread_id)
+                        .await
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    item_id = format!("{current_turn_id}-assistant");
+                    full_text.clear();
+                    last_text.clear();
+                    last_usage = None;
+                    last_model_usage = None;
+                    last_model = None;
+                    tool_names.clear();
+                    tool_inputs.clear();
+                    tool_counter = 0;
+                    thinking_counter = 0;
+                    permission_denial_ids.clear();
+
+                    emit_event(
+                        &event_sink,
+                        &workspace_id,
+                        "turn/started",
+                        json!({
+                            "threadId": thread_id,
+                            "turn": { "id": current_turn_id, "threadId": thread_id },
+                        }),
+                    );
+                    emit_event(
+                        &event_sink,
+                        &workspace_id,
+                        "item/started",
+                        json!({
+                            "threadId": thread_id,
+                            "item": { "id": item_id, "type": "agentMessage", "text": "" },
+                        }),
+                    );
+                }
+
+                if event_type == "assistant" {
+                    if let Some(uuid) = value.get("uuid").and_then(|v| v.as_str()) {
+                        if !uuid.is_empty() {
+                            item_id = uuid.to_string();
+                        }
+                    }
+                    if let Some(message) = value.get("message") {
+                        if let Some(model) = message.get("model").and_then(|v| v.as_str()) {
+                            if !model.trim().is_empty() {
+                                last_model = Some(model.to_string());
+                            }
+                        }
+                        if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
+                            for entry in content {
+                                let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                if entry_type == "thinking" {
+                                    if let Some(thinking) = entry.get("thinking").and_then(|v| v.as_str()) {
+                                        let trimmed = thinking.trim();
+                                        if !trimmed.is_empty() {
+                                            thinking_counter += 1;
+                                            let thinking_id = format!("{item_id}-thinking-{thinking_counter}");
+                                            emit_event(
+                                                &event_sink,
+                                                &workspace_id,
+                                                "item/started",
+                                                json!({
+                                                    "threadId": thread_id,
+                                                    "item": {
+                                                        "id": thinking_id,
+                                                        "type": "reasoning",
+                                                        "summary": "",
+                                                        "content": trimmed,
+                                                    }
+                                                }),
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if entry_type != "tool_use" {
+                                    continue;
+                                }
+                                let tool_id = entry
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let tool_name = entry
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Tool")
+                                    .to_string();
+                                let tool_input = entry.get("input").cloned().unwrap_or(Value::Null);
+                                if !tool_id.is_empty() {
+                                    tool_names.insert(tool_id.to_string(), tool_name.clone());
+                                    tool_inputs.insert(tool_id.to_string(), tool_input.clone());
+                                }
+                                let item_id_tool = if tool_id.is_empty() {
+                                    tool_counter += 1;
+                                    format!("{current_turn_id}-tool-{tool_counter}")
+                                } else {
+                                    tool_id.to_string()
+                                };
+                                // Check for AskUserQuestion - emit request_user_input event
+                                if tool_name == "AskUserQuestion" {
+                                    request_id_counter += 1;
+                                    // Extract questions array from tool_input
+                                    // Claude's AskUserQuestion tool has structure:
+                                    // { "questions": [{ "question": "...", "header": "...", "options": [{ "label": "...", "description": "..." }] }] }
+                                    let questions_raw = tool_input.get("questions").and_then(|v| v.as_array());
+                                    let questions = if let Some(q_array) = questions_raw {
+                                        // Map each question, adding the tool_id as the id for each
+                                        q_array.iter().enumerate().map(|(idx, q)| {
+                                            let id = if idx == 0 {
+                                                tool_id.to_string()
+                                            } else {
+                                                format!("{}-{}", tool_id, idx)
+                                            };
+                                            json!({
+                                                "id": id,
+                                                "header": q.get("header").and_then(|v| v.as_str()).unwrap_or("Claude needs your input"),
+                                                "question": q.get("question").and_then(|v| v.as_str()).unwrap_or(""),
+                                                "options": q.get("options").cloned().unwrap_or(Value::Null),
+                                            })
+                                        }).collect::<Vec<_>>()
+                                    } else {
+                                        // Fallback for legacy single question format
+                                        let question_text = tool_input
+                                            .get("question")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        vec![json!({
+                                            "id": tool_id,
+                                            "header": "Claude needs your input",
+                                            "question": question_text,
+                                        })]
+                                    };
+                                    emit_event_with_id(
+                                        &event_sink,
+                                        &workspace_id,
+                                        "item/tool/requestUserInput",
+                                        request_id_counter,
+                                        json!({
+                                            "threadId": thread_id,
+                                            "turnId": current_turn_id,
+                                            "itemId": item_id_tool,
+                                            "toolUseId": tool_id,
+                                            "questions": questions,
+                                        }),
+                                    );
+                                }
+
+                                emit_event(
+                                    &event_sink,
+                                    &workspace_id,
+                                    "item/started",
+                                    json!({
+                                        "threadId": thread_id,
+                                        "item": build_tool_item(
+                                            &item_id_tool,
+                                            &tool_name,
+                                            &tool_input,
+                                            "running",
+                                            None,
+                                            None,
+                                        ),
+                                    }),
+                                );
+                            }
+                        }
+                        let text = extract_text_from_message(message);
+                        if !text.is_empty() {
+                            full_text = text.clone();
+                            let delta = if full_text.starts_with(&last_text) {
+                                full_text[last_text.len()..].to_string()
+                            } else {
+                                full_text.clone()
+                            };
+                            if !delta.is_empty() {
+                                emit_event(
+                                    &event_sink,
+                                    &workspace_id,
+                                    "item/agentMessage/delta",
+                                    json!({
+                                        "threadId": thread_id,
+                                        "itemId": item_id,
+                                        "delta": delta,
+                                    }),
+                                );
+                                last_text = full_text.clone();
+                            }
+                        }
+                        if let Some(usage) = message.get("usage") {
+                            last_usage = Some(usage.clone());
+                        }
+                    }
+                } else if event_type == "user" {
+                    if let Some(message) = value.get("message") {
+                        if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
+                            for (index, entry) in content.iter().enumerate() {
+                                if entry.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
+                                    continue;
+                                }
+                                let tool_use_id = entry
+                                    .get("tool_use_id")
+                                    .or_else(|| entry.get("toolUseId"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let content_value = entry.get("content").cloned().unwrap_or(Value::Null);
+                                let mut output = tool_result_output(&content_value);
+                                let is_error = entry
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if output.trim().is_empty() {
+                                    if let Some(fallback) = value
+                                        .get("toolUseResult")
+                                        .or_else(|| value.get("tool_use_result"))
+                                    {
+                                        output = fallback
+                                            .get("content")
+                                            .map(tool_result_output)
+                                            .unwrap_or_else(|| tool_result_output(fallback));
+                                    }
+                                }
+                                let output_lower = output.to_lowercase();
+                                let is_permission_denial = is_error
+                                    && (output_lower.contains("requested permissions")
+                                        || output_lower.contains("haven't granted"));
+                                let result_value = tool_result_value(&content_value, &value);
+                                let command = tool_names
+                                    .get(tool_use_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| "Tool".to_string());
+                                let tool_input = tool_inputs
+                                    .get(tool_use_id)
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                if is_permission_denial {
+                                    let denial_id = if tool_use_id.is_empty() {
+                                        format!("{thread_id}-{command}-{index}")
+                                    } else {
+                                        tool_use_id.to_string()
+                                    };
+                                    if permission_denial_ids.insert(denial_id) {
+                                        emit_event(
+                                            &event_sink,
+                                            &workspace_id,
+                                            "turn/permissionDenied",
+                                            json!({
+                                                "threadId": thread_id,
+                                                "turnId": current_turn_id,
+                                            "permissionDenials": [json!({
+                                                "toolName": command,
+                                                "toolUseId": tool_use_id,
+                                                "toolInput": tool_input.clone(),
+                                            })],
+                                            }),
+                                        );
+                                    }
+                                }
+                                output = collapse_subagent_output(output, &command, &tool_input, &value);
+                                let item_id_result = if tool_use_id.is_empty() {
+                                    tool_counter += 1;
+                                    format!("{current_turn_id}-tool-result-{tool_counter}")
+                                } else {
+                                    tool_use_id.to_string()
+                                };
+                                emit_event(
+                                    &event_sink,
+                                    &workspace_id,
+                                    "item/completed",
+                                    json!({
+                                        "threadId": thread_id,
+                                        "item": build_tool_item(
+                                            &item_id_result,
+                                            &command,
+                                            &tool_input,
+                                            "completed",
+                                            Some(output.as_str()),
+                                            Some(&result_value),
+                                        ),
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                } else if event_type == "result" {
+                    if let Some(usage) = value.get("usage") {
+                        last_usage = Some(usage.clone());
+                    }
+                    if let Some(model_usage) = value.get("modelUsage") {
+                        last_model_usage = Some(model_usage.clone());
+                    }
+                    let mut denials: Vec<Value> = Vec::new();
+                    if let Some(items) = value
+                        .get("permission_denials")
+                        .or_else(|| value.get("permissionDenials"))
+                        .and_then(|item| item.as_array())
+                    {
+                        for (index, entry) in items.iter().enumerate() {
+                            let tool_name = entry
+                                .get("tool_name")
+                                .or_else(|| entry.get("toolName"))
+                                .and_then(|item| item.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
+                            if tool_name.is_empty() {
+                                continue;
+                            }
+                            let tool_use_id = entry
+                                .get("tool_use_id")
+                                .or_else(|| entry.get("toolUseId"))
+                                .and_then(|item| item.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let tool_input = entry
+                                .get("tool_input")
+                                .or_else(|| entry.get("toolInput"))
+                                .cloned()
+                                .unwrap_or(Value::Null);
+                            let denial_id = if tool_use_id.is_empty() {
+                                format!("{thread_id}-{tool_name}-{index}")
+                            } else {
+                                tool_use_id.clone()
+                            };
+                            if permission_denial_ids.insert(denial_id) {
+                                denials.push(json!({
+                                    "toolName": tool_name,
+                                    "toolUseId": tool_use_id,
+                                    "toolInput": tool_input,
+                                }));
+                            }
+                        }
+                    }
+                    if !denials.is_empty() {
+                        emit_event(
+                            &event_sink,
+                            &workspace_id,
+                            "turn/permissionDenied",
+                            json!({
+                                "threadId": thread_id,
+                                "turnId": current_turn_id,
+                                "permissionDenials": denials,
+                            }),
+                        );
+                    }
+
+                    // Result event signals end of turn
+                    if turn_active {
+                        if let Some(usage) = last_usage.take().and_then(|u| format_token_usage(u, last_model_usage.as_ref())) {
+                            emit_event(
+                                &event_sink,
+                                &workspace_id,
+                                "thread/tokenUsage/updated",
+                                json!({
+                                    "threadId": thread_id,
+                                    "tokenUsage": usage,
+                                }),
+                            );
+                        }
+
+                        emit_event(
+                            &event_sink,
+                            &workspace_id,
+                            "item/completed",
+                            json!({
+                                "threadId": thread_id,
+                                "item": {
+                                    "id": item_id,
+                                    "type": "agentMessage",
+                                    "text": full_text,
+                                    "model": last_model,
+                                },
+                            }),
+                        );
+                        emit_event(
+                            &event_sink,
+                            &workspace_id,
+                            "turn/completed",
+                            json!({
+                                "threadId": thread_id,
+                                "turn": { "id": current_turn_id, "threadId": thread_id },
+                            }),
+                        );
+
+                        turn_active = false;
+                    }
+                }
+            }
+            Err(_) => {
+                // Error reading - process likely ended
+                if turn_active {
+                    emit_event(
+                        &event_sink,
+                        &workspace_id,
+                        "turn/completed",
+                        json!({
+                            "threadId": thread_id,
+                            "turn": { "id": current_turn_id, "threadId": thread_id },
+                        }),
+                    );
+                }
+                break;
+            }
+        }
+    }
+}
+
+/// Background task that reads stderr from the persistent Claude CLI session
+/// and emits error events to the frontend.
+async fn read_persistent_stderr(
+    mut reader: AsyncBufReader<tokio::process::ChildStderr>,
+    workspace_id: String,
+    thread_id: String,
+    session: Arc<WorkspaceSession>,
+    event_sink: TauriEventSink,
+) {
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                // EOF - process ended, cleanup the session for this thread
+                let _ = session.kill_persistent_session(&thread_id).await;
+                break;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Emit stderr message to frontend
+                emit_event(
+                    &event_sink,
+                    &workspace_id,
+                    "claude/stderr",
+                    json!({ "message": trimmed, "threadId": thread_id }),
+                );
+            }
+            Err(_) => {
+                // Error reading - process likely ended, cleanup
+                let _ = session.kill_persistent_session(&thread_id).await;
+                break;
+            }
+        }
+    }
+}
+
 fn emit_event(event_sink: &TauriEventSink, workspace_id: &str, method: &str, params: Value) {
     event_sink.emit_app_server_event(AppServerEvent {
         workspace_id: workspace_id.to_string(),
         message: json!({
+            "method": method,
+            "params": params,
+        }),
+    });
+}
+
+fn emit_event_with_id(event_sink: &TauriEventSink, workspace_id: &str, method: &str, id: u64, params: Value) {
+    event_sink.emit_app_server_event(AppServerEvent {
+        workspace_id: workspace_id.to_string(),
+        message: json!({
+            "id": id,
             "method": method,
             "params": params,
         }),
@@ -1319,6 +1786,7 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                             .unwrap_or_else(|| tool_result_output(fallback));
                     }
                 }
+                let result_value = tool_result_value(&content_value, &value);
                 let command = tool_names
                     .get(tool_use_id)
                     .cloned()
@@ -1339,14 +1807,14 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                     tool_use_id.to_string()
                 };
                 let item_id = id.clone();
-                let item = json!({
-                    "id": id,
-                    "type": "commandExecution",
-                    "command": [command],
-                    "status": "completed",
-                    "aggregatedOutput": output,
-                    "toolInput": tool_input,
-                });
+                let item = build_tool_item(
+                    &id,
+                    &command,
+                    &tool_input,
+                    "completed",
+                    Some(output.as_str()),
+                    Some(&result_value),
+                );
                 if let Some(index) = tool_item_indices.get(&item_id) {
                     items[*index] = item;
                 } else {
@@ -1406,24 +1874,25 @@ fn build_thread_from_session(entry: &WorkspaceEntry, thread_id: &str) -> Result<
                         }
                         // Don't skip Task tools - we want to show them
                         // (subagent_tool_ids tracking above is still needed for collapsing output)
-                        let id = if tool_id.is_empty() {
-                            format!("{thread_id}-tool-{}", items.len())
-                        } else {
-                            tool_id.to_string()
-                        };
-                        let item_id = id.clone();
-                        let item = json!({
-                            "id": id,
-                            "type": "commandExecution",
-                            "command": [tool_name],
-                            "status": "running",
-                            "toolInput": tool_input,
-                        });
-                        if let Some(index) = tool_item_indices.get(&item_id) {
-                            items[*index] = item;
-                        } else {
-                            tool_item_indices.insert(item_id, items.len());
-                            items.push(item);
+                    let id = if tool_id.is_empty() {
+                        format!("{thread_id}-tool-{}", items.len())
+                    } else {
+                        tool_id.to_string()
+                    };
+                    let item_id = id.clone();
+                    let item = build_tool_item(
+                        &id,
+                        &tool_name,
+                        &tool_input,
+                        "running",
+                        None,
+                        None,
+                    );
+                    if let Some(index) = tool_item_indices.get(&item_id) {
+                        items[*index] = item;
+                    } else {
+                        tool_item_indices.insert(item_id, items.len());
+                        items.push(item);
                         }
                     }
                     _ => {}
@@ -1823,6 +2292,7 @@ fn process_subagent_line(
                         .unwrap_or_else(|| tool_result_output(fallback));
                 }
             }
+            let result_value = tool_result_value(&content_value, value);
             let command = tool_names
                 .get(tool_use_id)
                 .cloned()
@@ -1844,14 +2314,14 @@ fn process_subagent_line(
                 "item/completed",
                 json!({
                     "threadId": thread_id,
-                    "item": {
-                        "id": item_id,
-                        "type": "commandExecution",
-                        "command": [command],
-                        "status": "completed",
-                        "aggregatedOutput": output,
-                        "toolInput": tool_input,
-                    }
+                    "item": build_tool_item(
+                        &item_id,
+                        &command,
+                        &tool_input,
+                        "completed",
+                        Some(output.as_str()),
+                        Some(&result_value),
+                    ),
                 }),
             );
         }
@@ -1888,13 +2358,14 @@ fn process_subagent_line(
                     "item/started",
                     json!({
                         "threadId": thread_id,
-                        "item": {
-                            "id": item_id,
-                            "type": "commandExecution",
-                            "command": [tool_name],
-                            "status": "running",
-                            "toolInput": tool_input,
-                        }
+                        "item": build_tool_item(
+                            &item_id,
+                            &tool_name,
+                            &tool_input,
+                            "running",
+                            None,
+                            None,
+                        ),
                     }),
                 );
             }
@@ -2268,6 +2739,217 @@ fn tool_result_output(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
+fn tool_result_value(content_value: &Value, event_value: &Value) -> Value {
+    let is_empty = match content_value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    };
+    if !is_empty {
+        return content_value.clone();
+    }
+    if let Some(fallback) = event_value
+        .get("toolUseResult")
+        .or_else(|| event_value.get("tool_use_result"))
+    {
+        if let Some(content) = fallback.get("content") {
+            return content.clone();
+        }
+        return fallback.clone();
+    }
+    Value::Null
+}
+
+fn parse_mcp_tool_name(tool_name: &str) -> Option<(String, String)> {
+    let trimmed = tool_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.to_lowercase().starts_with("mcp__") {
+        return None;
+    }
+    let parts: Vec<&str> = trimmed.split("__").collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let server = parts[1].trim();
+    let tool = parts[2..].join("__");
+    if server.is_empty() || tool.trim().is_empty() {
+        return None;
+    }
+    Some((server.to_string(), tool.trim().to_string()))
+}
+
+fn extract_string_field(map: &Map<String, Value>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = map.get(*key).and_then(|value| value.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_path_from_value(value: &Value) -> Option<String> {
+    if let Some(path) = value.as_str() {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(map) = value.as_object() {
+        let keys = [
+            "file_path",
+            "filePath",
+            "path",
+            "filename",
+            "file",
+            "notebook_path",
+            "notebookPath",
+        ];
+        return extract_string_field(map, &keys);
+    }
+    None
+}
+
+fn extract_file_paths(tool_input: &Value) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let Some(map) = tool_input.as_object() else {
+        return paths;
+    };
+    let keys = [
+        "file_path",
+        "filePath",
+        "path",
+        "filename",
+        "file",
+        "notebook_path",
+        "notebookPath",
+    ];
+    if let Some(path) = extract_string_field(map, &keys) {
+        paths.push(path);
+    }
+    for key in ["files", "paths", "targets", "edits", "changes"] {
+        if let Some(Value::Array(items)) = map.get(key) {
+            for item in items {
+                if let Some(path) = extract_path_from_value(item) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    let mut deduped: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for path in paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            deduped.push(trimmed.to_string());
+        }
+    }
+    deduped
+}
+
+fn build_tool_item(
+    id: &str,
+    tool_name: &str,
+    tool_input: &Value,
+    status: &str,
+    output: Option<&str>,
+    result_value: Option<&Value>,
+) -> Value {
+    if let Some((server, tool)) = parse_mcp_tool_name(tool_name) {
+        let mut item = json!({
+            "id": id,
+            "type": "mcpToolCall",
+            "server": server,
+            "tool": tool,
+            "arguments": tool_input.clone(),
+            "status": status,
+        });
+        if let Value::Object(ref mut map) = item {
+            if let Some(result) = result_value {
+                if !result.is_null() {
+                    map.insert("result".to_string(), result.clone());
+                } else if let Some(output) = output {
+                    map.insert("result".to_string(), Value::String(output.to_string()));
+                }
+            } else if let Some(output) = output {
+                map.insert("result".to_string(), Value::String(output.to_string()));
+            }
+        }
+        return item;
+    }
+
+    let normalized = tool_name.trim().to_lowercase();
+    if normalized == "websearch" {
+        let query = tool_input
+            .get("query")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mut item = json!({
+            "id": id,
+            "type": "webSearch",
+            "query": query,
+            "status": status,
+        });
+        if let Value::Object(ref mut map) = item {
+            if let Some(output) = output {
+                map.insert("aggregatedOutput".to_string(), Value::String(output.to_string()));
+            }
+        }
+        return item;
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "write" | "edit" | "multiedit" | "notebookedit"
+    ) {
+        let paths = extract_file_paths(tool_input);
+        let kind = if normalized == "write" { "add" } else { "modify" };
+        let changes = paths
+            .into_iter()
+            .map(|path| json!({ "path": path, "kind": kind }))
+            .collect::<Vec<_>>();
+        let mut item = json!({
+            "id": id,
+            "type": "fileChange",
+            "status": status,
+            "changes": changes,
+        });
+        if let Value::Object(ref mut map) = item {
+            if let Some(output) = output {
+                map.insert("aggregatedOutput".to_string(), Value::String(output.to_string()));
+            }
+            if !tool_input.is_null() {
+                map.insert("toolInput".to_string(), tool_input.clone());
+            }
+        }
+        return item;
+    }
+
+    let mut item = json!({
+        "id": id,
+        "type": "commandExecution",
+        "command": [tool_name],
+        "status": status,
+        "toolInput": tool_input.clone(),
+    });
+    if let Value::Object(ref mut map) = item {
+        if let Some(output) = output {
+            map.insert("aggregatedOutput".to_string(), Value::String(output.to_string()));
+        }
+    }
+    item
+}
+
 fn extract_subagent_id(value: &Value) -> Option<String> {
     value
         .get("toolUseResult")
@@ -2371,6 +3053,7 @@ fn usage_number(map: &Map<String, Value>, keys: &[&str]) -> i64 {
     }
     0
 }
+
 
 async fn build_review_prompt(
     workspace_id: &str,

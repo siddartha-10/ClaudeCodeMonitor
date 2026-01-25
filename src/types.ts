@@ -149,13 +149,6 @@ export type ClaudeDoctorResult = {
   path: string | null;
 };
 
-export type ApprovalRequest = {
-  workspace_id: string;
-  request_id: number;
-  method: string;
-  params: Record<string, unknown>;
-};
-
 export type PermissionDenial = {
   id: string;
   workspace_id: string;
@@ -164,6 +157,40 @@ export type PermissionDenial = {
   tool_name: string;
   tool_use_id?: string | null;
   tool_input?: Record<string, unknown> | null;
+};
+
+export type RequestUserInputOption = {
+  label: string;
+  description: string;
+};
+
+export type RequestUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  options?: RequestUserInputOption[];
+};
+
+export type RequestUserInputParams = {
+  thread_id: string;
+  turn_id: string;
+  item_id: string;
+  tool_use_id: string;
+  questions: RequestUserInputQuestion[];
+};
+
+export type RequestUserInputRequest = {
+  workspace_id: string;
+  request_id: number;
+  params: RequestUserInputParams;
+};
+
+export type RequestUserInputAnswer = {
+  answers: string[];
+};
+
+export type RequestUserInputResponse = {
+  answers: Record<string, RequestUserInputAnswer>;
 };
 
 export type GitFileStatus = {
@@ -308,14 +335,18 @@ export type TurnPlan = {
   steps: TurnPlanStep[];
 };
 
+export type ClaudeTaskStatus = 'pending' | 'in_progress' | 'completed';
+
 export type ClaudeTask = {
   id: string;
   subject: string;
   description: string;
-  activeForm: string | null;
-  status: string;
+  activeForm?: string;
+  status: ClaudeTaskStatus;
+  owner?: string;
   blocks: string[];
   blockedBy: string[];
+  metadata?: Record<string, unknown>;
 };
 
 export type ClaudeTasksResponse = {
@@ -338,6 +369,7 @@ export type CreditsSnapshot = {
 export type RateLimitSnapshot = {
   primary: RateLimitWindow | null;
   secondary: RateLimitWindow | null;
+  sonnet: RateLimitWindow | null;
   credits: CreditsSnapshot | null;
   planType: string | null;
 };

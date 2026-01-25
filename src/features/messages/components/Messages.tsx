@@ -12,20 +12,31 @@ import Search from "lucide-react/dist/esm/icons/search";
 import Terminal from "lucide-react/dist/esm/icons/terminal";
 import Users from "lucide-react/dist/esm/icons/users";
 import Wrench from "lucide-react/dist/esm/icons/wrench";
-import type { ConversationItem } from "../../../types";
+import type {
+  ConversationItem,
+  RequestUserInputRequest,
+  RequestUserInputResponse,
+} from "../../../types";
 import { Markdown } from "./Markdown";
 import { DiffBlock } from "../../git/components/DiffBlock";
 import { languageFromPath } from "../../../utils/syntax";
 import { useFileLinkOpener } from "../hooks/useFileLinkOpener";
+import { RequestUserInputMessage } from "../../app/components/RequestUserInputMessage";
 
 type MessagesProps = {
   items: ConversationItem[];
   threadId: string | null;
+  workspaceId?: string | null;
   isThinking: boolean;
   processingStartedAt?: number | null;
   lastDurationMs?: number | null;
   workspacePath?: string | null;
   codeBlockCopyUseModifier?: boolean;
+  userInputRequests?: RequestUserInputRequest[];
+  onUserInputSubmit?: (
+    request: RequestUserInputRequest,
+    response: RequestUserInputResponse,
+  ) => void;
 };
 
 type TodoItem = {
@@ -370,6 +381,7 @@ function buildToolSummary(
     return {
       label: "searched",
       value: item.detail || "",
+      output: item.output || "",
     };
   }
 
@@ -1000,11 +1012,14 @@ const CommandOutput = memo(function CommandOutput({ output }: CommandOutputProps
 export const Messages = memo(function Messages({
   items,
   threadId,
+  workspaceId = null,
   isThinking,
   processingStartedAt = null,
   lastDurationMs = null,
   workspacePath = null,
   codeBlockCopyUseModifier = false,
+  userInputRequests = [],
+  onUserInputSubmit,
 }: MessagesProps) {
   const SCROLL_THRESHOLD_PX = 120;
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -1016,7 +1031,15 @@ export const Messages = memo(function Messages({
   );
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
-  const scrollKey = scrollKeyForItems(items);
+  const activeUserInputRequestId =
+    threadId && userInputRequests.length
+      ? (userInputRequests.find(
+          (request) =>
+            request.params.thread_id === threadId &&
+            (!workspaceId || request.workspace_id === workspaceId),
+        )?.request_id ?? null)
+      : null;
+  const scrollKey = `${scrollKeyForItems(items)}-${activeUserInputRequestId ?? "no-input"}`;
   const { openFileLink, showFileLinkMenu } = useFileLinkOpener(workspacePath);
 
   const isNearBottom = useCallback(
@@ -1130,6 +1153,16 @@ export const Messages = memo(function Messages({
   }, [scrollKey, isThinking, isNearBottom]);
 
   const groupedItems = buildToolGroups(visibleItems);
+  const hasActiveUserInputRequest = activeUserInputRequestId !== null;
+  const userInputNode =
+    hasActiveUserInputRequest && onUserInputSubmit ? (
+      <RequestUserInputMessage
+        requests={userInputRequests}
+        activeThreadId={threadId}
+        activeWorkspaceId={workspaceId}
+        onSubmit={onUserInputSubmit}
+      />
+    ) : null;
 
   const renderItem = (item: ConversationItem) => {
     if (item.kind === "message") {
@@ -1238,13 +1271,14 @@ export const Messages = memo(function Messages({
         }
         return renderItem(entry.item);
       })}
+      {userInputNode}
       <WorkingIndicator
         isThinking={isThinking}
         processingStartedAt={processingStartedAt}
         lastDurationMs={lastDurationMs}
         hasItems={items.length > 0}
       />
-      {!items.length && (
+      {!items.length && !userInputNode && (
         <div className="empty messages-empty">
           Start a thread and send a prompt to the agent.
         </div>

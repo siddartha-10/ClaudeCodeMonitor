@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as Sentry from "@sentry/react";
 import type {
-  ApprovalRequest,
   AppServerEvent,
   ConversationItem,
   CustomPromptOption,
   DebugEntry,
   PermissionDenial,
-  RateLimitSnapshot,
+  RequestUserInputRequest,
   ThreadSummary,
   ThreadTokenUsage,
   TurnPlan,
@@ -17,12 +16,9 @@ import type {
 } from "../../../types";
 import {
   type ApprovalRuleInfo,
-  getApprovalCommandInfo,
-  matchesCommandPrefix,
   normalizeCommandTokens,
 } from "../../../utils/approvalRules";
 import {
-  respondToServerRequest,
   rememberApprovalRule,
   sendUserMessage as sendUserMessageService,
   startReview as startReviewService,
@@ -30,7 +26,6 @@ import {
   listThreads as listThreadsService,
   resumeThread as resumeThreadService,
   archiveThread as archiveThreadService,
-  getAccountRateLimits,
   interruptTurn as interruptTurnService,
 } from "../../../services/tauri";
 import { useAppServerEvents } from "../../app/hooks/useAppServerEvents";
@@ -45,15 +40,17 @@ import {
 } from "../../../utils/threadItems";
 import { expandCustomPromptText } from "../../../utils/customPrompts";
 import { initialState, threadReducer } from "./useThreadsReducer";
+import { useThreadUserInput } from "./useThreadUserInput";
 
-const STORAGE_KEY_THREAD_ACTIVITY = "codexmonitor.threadLastUserActivity";
-const STORAGE_KEY_PINNED_THREADS = "codexmonitor.pinnedThreads";
-const STORAGE_KEY_CUSTOM_NAMES = "codexmonitor.threadCustomNames";
+const STORAGE_KEY_THREAD_ACTIVITY = "claude-code-monitor.threadLastUserActivity";
+const STORAGE_KEY_PINNED_THREADS = "claude-code-monitor.pinnedThreads";
+const STORAGE_KEY_CUSTOM_NAMES = "claude-code-monitor.threadCustomNames";
 const MAX_PINS_SOFT_LIMIT = 5;
 
 type ThreadActivityMap = Record<string, Record<string, number>>;
 type PinnedThreadsMap = Record<string, number>;
 type CustomNamesMap = Record<string, string>;
+type LastPrompt = { workspace: WorkspaceInfo; text: string; images: string[] };
 
 function loadThreadActivity(): ThreadActivityMap {
   if (typeof window === "undefined") {
@@ -173,6 +170,7 @@ type UseThreadsOptions = {
   effort?: string | null;
   collaborationMode?: Record<string, unknown> | null;
   accessMode?: "read-only" | "current" | "full-access";
+  steerEnabled?: boolean;
   customPrompts?: CustomPromptOption[];
   onMessageActivity?: () => void;
 };
@@ -191,6 +189,23 @@ function normalizeStringList(value: unknown) {
 
 function normalizeRootPath(value: string) {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function isThreadInWorkspace(
+  threadCwd: string,
+  normalizedWorkspacePath: string,
+) {
+  if (!normalizedWorkspacePath) {
+    return true;
+  }
+  const normalizedThreadPath = normalizeRootPath(threadCwd);
+  if (!normalizedThreadPath) {
+    return true;
+  }
+  if (normalizedThreadPath === normalizedWorkspacePath) {
+    return true;
+  }
+  return normalizedThreadPath.startsWith(`${normalizedWorkspacePath}/`);
 }
 
 function extractRpcErrorMessage(response: unknown) {
@@ -291,80 +306,6 @@ function normalizeTokenUsage(raw: Record<string, unknown>): ThreadTokenUsage {
   };
 }
 
-function normalizeRateLimits(raw: Record<string, unknown>): RateLimitSnapshot {
-  const primary = (raw.primary as Record<string, unknown>) ?? null;
-  const secondary = (raw.secondary as Record<string, unknown>) ?? null;
-  const credits = (raw.credits as Record<string, unknown>) ?? null;
-  return {
-    primary: primary
-      ? {
-          usedPercent: asNumber(primary.usedPercent ?? primary.used_percent),
-          windowDurationMins: (() => {
-            const value = primary.windowDurationMins ?? primary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = primary.resetsAt ?? primary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    secondary: secondary
-      ? {
-          usedPercent: asNumber(secondary.usedPercent ?? secondary.used_percent),
-          windowDurationMins: (() => {
-            const value = secondary.windowDurationMins ?? secondary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = secondary.resetsAt ?? secondary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    credits: credits
-      ? {
-          hasCredits: Boolean(credits.hasCredits ?? credits.has_credits),
-          unlimited: Boolean(credits.unlimited),
-          balance: typeof credits.balance === "string" ? credits.balance : null,
-        }
-      : null,
-    planType: typeof raw.planType === "string"
-      ? raw.planType
-      : typeof raw.plan_type === "string"
-        ? raw.plan_type
-        : null,
-  };
-}
-
 function normalizePlanStepStatus(value: unknown): TurnPlanStepStatus {
   const raw = typeof value === "string" ? value : "";
   const normalized = raw.replace(/[_\s-]/g, "").toLowerCase();
@@ -417,6 +358,7 @@ export function useThreads({
   effort,
   collaborationMode,
   accessMode,
+  steerEnabled = false,
   customPrompts = [],
   onMessageActivity,
 }: UseThreadsOptions) {
@@ -426,10 +368,12 @@ export function useThreads({
   const threadActivityRef = useRef<ThreadActivityMap>(loadThreadActivity());
   const pinnedThreadsRef = useRef<PinnedThreadsMap>(loadPinnedThreads());
   const [pinnedThreadsVersion, setPinnedThreadsVersion] = useState(0);
+  const { handleUserInputSubmit } = useThreadUserInput({ dispatch });
   void pinnedThreadsVersion;
   const pendingInterruptsRef = useRef<Set<string>>(new Set());
   const customNamesRef = useRef<CustomNamesMap>({});
   const approvalAllowlistRef = useRef<Record<string, string[][]>>({});
+  const lastPromptByThreadRef = useRef<Record<string, LastPrompt>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -540,53 +484,6 @@ export function useThreads({
   const activeItems = useMemo(
     () => (activeThreadId ? state.itemsByThread[activeThreadId] ?? [] : []),
     [activeThreadId, state.itemsByThread],
-  );
-
-  const refreshAccountRateLimits = useCallback(
-    async (workspaceId?: string) => {
-      const targetId = workspaceId ?? activeWorkspaceId;
-      if (!targetId) {
-        return;
-      }
-      onDebug?.({
-        id: `${Date.now()}-client-account-rate-limits`,
-        timestamp: Date.now(),
-        source: "client",
-        label: "account/rateLimits/read",
-        payload: { workspaceId: targetId },
-      });
-      try {
-        const response = await getAccountRateLimits(targetId);
-        onDebug?.({
-          id: `${Date.now()}-server-account-rate-limits`,
-          timestamp: Date.now(),
-          source: "server",
-          label: "account/rateLimits/read response",
-          payload: response,
-        });
-        const rateLimits =
-          (response?.result?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.result?.rate_limits as Record<string, unknown> | undefined) ??
-          (response?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.rate_limits as Record<string, unknown> | undefined);
-        if (rateLimits) {
-          dispatch({
-            type: "setRateLimits",
-            workspaceId: targetId,
-            rateLimits: normalizeRateLimits(rateLimits),
-          });
-        }
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-account-rate-limits-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "account/rateLimits/read error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [activeWorkspaceId, onDebug],
   );
 
   const pushThreadErrorMessage = useCallback(
@@ -764,14 +661,6 @@ export function useThreads({
     [handleToolOutputDelta],
   );
 
-  const handleWorkspaceConnected = useCallback(
-    (workspaceId: string) => {
-      onWorkspaceConnected(workspaceId);
-      void refreshAccountRateLimits(workspaceId);
-    },
-    [onWorkspaceConnected, refreshAccountRateLimits],
-  );
-
   const rememberApprovalPrefix = useCallback((workspaceId: string, command: string[]) => {
     const normalized = normalizeCommandTokens(command);
     if (!normalized.length) {
@@ -793,33 +682,39 @@ export function useThreads({
 
   const handlers = useMemo(
     () => ({
-      onWorkspaceConnected: handleWorkspaceConnected,
-      onApprovalRequest: (approval: ApprovalRequest) => {
-        const commandInfo = getApprovalCommandInfo(approval.params ?? {});
-        const allowlist =
-          approvalAllowlistRef.current[approval.workspace_id] ?? [];
-        if (
-          commandInfo &&
-          matchesCommandPrefix(commandInfo.tokens, allowlist)
-        ) {
-          void respondToServerRequest(
-            approval.workspace_id,
-            approval.request_id,
-            "accept",
-          );
-          return;
-        }
-        dispatch({ type: "addApproval", approval });
+      onWorkspaceConnected,
+      onRequestUserInput: (request: RequestUserInputRequest) => {
+        dispatch({ type: "addUserInputRequest", request });
       },
-      onPermissionDenied: ({ denials }: { denials: PermissionDenial[] }) => {
+      onPermissionDenied: ({
+        workspaceId,
+        threadId,
+        denials,
+      }: {
+        workspaceId: string;
+        threadId: string;
+        denials: PermissionDenial[];
+      }) => {
         if (denials.length) {
           dispatch({ type: "addPermissionDenials", denials });
+          // If AskUserQuestion was denied, clear any pending user input requests for this thread.
+          // This happens when using bypassPermissions or dontAsk mode where the CLI
+          // immediately denies the tool without waiting for user input.
+          const hasAskUserQuestionDenial = denials.some(
+            (d) => d.tool_name === "AskUserQuestion",
+          );
+          if (hasAskUserQuestionDenial && threadId && workspaceId) {
+            dispatch({
+              type: "clearUserInputRequestsForThread",
+              threadId,
+              workspaceId,
+            });
+          }
         }
       },
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
-        const inferredSource =
-          method === "codex/stderr" || method === "claude/stderr" ? "stderr" : "event";
+        const inferredSource = method === "claude/stderr" ? "stderr" : "event";
         onDebug?.({
           id: `${Date.now()}-server-event`,
           timestamp: Date.now(),
@@ -977,10 +872,20 @@ export function useThreads({
           dispatch({ type: "setActiveTurnId", threadId, turnId });
         }
       },
-      onTurnCompleted: (_workspaceId: string, threadId: string, _turnId: string) => {
+      onTurnCompleted: (workspaceId: string, threadId: string, _turnId: string) => {
         markProcessing(threadId, false);
         dispatch({ type: "setActiveTurnId", threadId, turnId: null });
         pendingInterruptsRef.current.delete(threadId);
+        // Clear any stale user input requests for this thread when the turn ends.
+        // This ensures we don't show orphaned prompts if the CLI completed/failed
+        // before the user could respond (e.g., permission denied, timeout).
+        if (threadId && workspaceId) {
+          dispatch({
+            type: "clearUserInputRequestsForThread",
+            threadId,
+            workspaceId,
+          });
+        }
       },
       onTurnPlanUpdated: (
         workspaceId: string,
@@ -1025,16 +930,6 @@ export function useThreads({
           tokenUsage: normalizeTokenUsage(tokenUsage),
         });
       },
-      onAccountRateLimitsUpdated: (
-        workspaceId: string,
-        rateLimits: Record<string, unknown>,
-      ) => {
-        dispatch({
-          type: "setRateLimits",
-          workspaceId,
-          rateLimits: normalizeRateLimits(rateLimits),
-        });
-      },
       onTurnError: (
         workspaceId: string,
         threadId: string,
@@ -1062,7 +957,7 @@ export function useThreads({
     [
       activeThreadId,
       getCustomName,
-      handleWorkspaceConnected,
+      onWorkspaceConnected,
       handleItemUpdate,
       handleTerminalInteraction,
       handleToolOutputDelta,
@@ -1318,9 +1213,8 @@ export function useThreads({
           const nextCursor =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = nextCursor;
@@ -1481,9 +1375,8 @@ export function useThreads({
           const next =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = next;
@@ -1586,7 +1479,7 @@ export function useThreads({
       threadId: string,
       text: string,
       images: string[] = [],
-      options?: { skipPromptExpansion?: boolean },
+      options?: { skipPromptExpansion?: boolean; skipUserMessage?: boolean },
     ) => {
       const messageText = text.trim();
       if (!messageText && images.length === 0) {
@@ -1602,6 +1495,33 @@ export function useThreads({
         }
         finalText = promptExpansion?.expanded ?? messageText;
       }
+      lastPromptByThreadRef.current[threadId] = {
+        workspace,
+        text: finalText,
+        images,
+      };
+      const wasProcessing =
+        (state.threadStatusById[threadId]?.isProcessing ?? false) &&
+        steerEnabled;
+      let didInsertOptimistic = false;
+      if (wasProcessing) {
+        const optimisticText = finalText || (images.length > 0 ? "[image]" : "");
+        if (optimisticText) {
+          dispatch({
+            type: "upsertItem",
+            threadId,
+            item: {
+              id: `optimistic-user-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 8)}`,
+              kind: "message",
+              role: "user",
+              text: optimisticText,
+            },
+          });
+          didInsertOptimistic = true;
+        }
+      }
       Sentry.metrics.count("prompt_sent", 1, {
         attributes: {
           workspace_id: workspace.id,
@@ -1615,14 +1535,16 @@ export function useThreads({
       });
       recordThreadActivity(workspace.id, threadId);
       const hasCustomName = Boolean(getCustomName(workspace.id, threadId));
-      dispatch({
-        type: "addUserMessage",
-        workspaceId: workspace.id,
-        threadId,
-        text: finalText,
-        images,
-        hasCustomName,
-      });
+      if (!didInsertOptimistic && !options?.skipUserMessage) {
+        dispatch({
+          type: "addUserMessage",
+          workspaceId: workspace.id,
+          threadId,
+          text: finalText,
+          images,
+          hasCustomName,
+        });
+      }
       markProcessing(threadId, true);
       safeMessageActivity();
       onDebug?.({
@@ -1705,6 +1627,65 @@ export function useThreads({
       pushThreadErrorMessage,
       recordThreadActivity,
       safeMessageActivity,
+      state.threadStatusById,
+      steerEnabled,
+    ],
+  );
+
+  const handlePermissionRetry = useCallback(
+    async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
+      try {
+        await rememberApprovalRule(denial.workspace_id, ruleInfo.rule);
+      } catch (error) {
+        onDebug?.({
+          id: `${Date.now()}-client-permission-retry-rule-error`,
+          timestamp: Date.now(),
+          source: "error",
+          label: "permission retry rule error",
+          payload: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      if (ruleInfo.commandTokens) {
+        rememberApprovalPrefix(denial.workspace_id, ruleInfo.commandTokens);
+      }
+
+      dispatch({ type: "removePermissionDenial", denialId: denial.id });
+
+      const lastPrompt = lastPromptByThreadRef.current[denial.thread_id];
+      if (!lastPrompt || lastPrompt.workspace.id !== denial.workspace_id) {
+        pushThreadErrorMessage(
+          denial.thread_id,
+          "No recent prompt available to retry.",
+        );
+        return;
+      }
+
+      try {
+        await interruptTurnService(
+          denial.workspace_id,
+          denial.thread_id,
+          denial.turn_id || "pending",
+        );
+        await sendMessageToThread(
+          lastPrompt.workspace,
+          denial.thread_id,
+          lastPrompt.text,
+          lastPrompt.images,
+          { skipPromptExpansion: true, skipUserMessage: true },
+        );
+      } catch (error) {
+        pushThreadErrorMessage(
+          denial.thread_id,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [
+      onDebug,
+      pushThreadErrorMessage,
+      rememberApprovalPrefix,
+      sendMessageToThread,
     ],
   );
 
@@ -1893,54 +1874,6 @@ export function useThreads({
     ],
   );
 
-  const handleApprovalDecision = useCallback(
-    async (request: ApprovalRequest, decision: "accept" | "decline") => {
-      await respondToServerRequest(
-        request.workspace_id,
-        request.request_id,
-        decision,
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [],
-  );
-
-  const handleApprovalRemember = useCallback(
-    async (request: ApprovalRequest, ruleInfo: ApprovalRuleInfo) => {
-      try {
-        await rememberApprovalRule(request.workspace_id, ruleInfo.rule);
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-approval-rule-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "approval rule error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      if (ruleInfo.commandTokens) {
-        rememberApprovalPrefix(request.workspace_id, ruleInfo.commandTokens);
-      }
-
-      await respondToServerRequest(
-        request.workspace_id,
-        request.request_id,
-        "accept",
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [onDebug, rememberApprovalPrefix],
-  );
-
   const handlePermissionRemember = useCallback(
     async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
       try {
@@ -2020,18 +1953,12 @@ export function useThreads({
     [dispatch],
   );
 
-  useEffect(() => {
-    if (activeWorkspace?.connected) {
-      void refreshAccountRateLimits(activeWorkspace.id);
-    }
-  }, [activeWorkspace?.connected, activeWorkspace?.id, refreshAccountRateLimits]);
-
   return {
     activeThreadId,
     setActiveThreadId,
     activeItems,
-    approvals: state.approvals,
     permissionDenials: state.permissionDenials,
+    userInputRequests: state.userInputRequests,
     threadsByWorkspace: state.threadsByWorkspace,
     threadParentById: state.threadParentById,
     threadStatusById: state.threadStatusById,
@@ -2040,10 +1967,8 @@ export function useThreads({
     threadListCursorByWorkspace: state.threadListCursorByWorkspace,
     activeTurnIdByThread: state.activeTurnIdByThread,
     tokenUsageByThread: state.tokenUsageByThread,
-    rateLimitsByWorkspace: state.rateLimitsByWorkspace,
     planByThread: state.planByThread,
     lastAgentMessageByThread: state.lastAgentMessageByThread,
-    refreshAccountRateLimits,
     interruptTurn,
     removeThread,
     pinThread,
@@ -2060,9 +1985,9 @@ export function useThreads({
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
+    handlePermissionRetry,
     handlePermissionDismiss,
+    handleUserInputSubmit,
   };
 }
