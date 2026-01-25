@@ -402,7 +402,7 @@ pub(crate) async fn spawn_workspace_session(
     }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::types::{WorkspaceKind, WorkspaceSettings};
