@@ -149,14 +149,6 @@ export type ClaudeDoctorResult = {
   path: string | null;
 };
 
-export type ApprovalRequest = {
-  workspace_id: string;
-  request_id: number;
-  tool_use_id: string;
-  method: string;
-  params: Record<string, unknown>;
-};
-
 export type PermissionDenial = {
   id: string;
   workspace_id: string;
@@ -343,14 +335,18 @@ export type TurnPlan = {
   steps: TurnPlanStep[];
 };
 
+export type ClaudeTaskStatus = 'pending' | 'in_progress' | 'completed';
+
 export type ClaudeTask = {
   id: string;
   subject: string;
   description: string;
-  activeForm: string | null;
-  status: string;
+  activeForm?: string;
+  status: ClaudeTaskStatus;
+  owner?: string;
   blocks: string[];
   blockedBy: string[];
+  metadata?: Record<string, unknown>;
 };
 
 export type ClaudeTasksResponse = {
@@ -373,6 +369,7 @@ export type CreditsSnapshot = {
 export type RateLimitSnapshot = {
   primary: RateLimitWindow | null;
   secondary: RateLimitWindow | null;
+  sonnet: RateLimitWindow | null;
   credits: CreditsSnapshot | null;
   planType: string | null;
 };

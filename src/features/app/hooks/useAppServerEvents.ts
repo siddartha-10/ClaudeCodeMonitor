@@ -1,10 +1,5 @@
 import { useEffect } from "react";
-import type {
-  AppServerEvent,
-  ApprovalRequest,
-  PermissionDenial,
-  RequestUserInputRequest,
-} from "../../../types";
+import type { AppServerEvent, PermissionDenial, RequestUserInputRequest } from "../../../types";
 import { subscribeAppServerEvents } from "../../../services/events";
 
 type AgentDelta = {
@@ -24,7 +19,6 @@ type AgentCompleted = {
 
 type AppServerEventHandlers = {
   onWorkspaceConnected?: (workspaceId: string) => void;
-  onApprovalRequest?: (request: ApprovalRequest) => void;
   onPermissionDenied?: (event: {
     workspaceId: string;
     threadId: string;
@@ -74,11 +68,7 @@ type AppServerEventHandlers = {
     threadId: string,
     tokenUsage: Record<string, unknown>,
   ) => void;
-  onAccountRateLimitsUpdated?: (
-    workspaceId: string,
-    rateLimits: Record<string, unknown>,
-  ) => void;
-};
+  };
 
 export function useAppServerEvents(handlers: AppServerEventHandlers) {
   useEffect(() => {
@@ -90,35 +80,6 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
 
       if (method === "claude/connected") {
         handlers.onWorkspaceConnected?.(workspace_id);
-        return;
-      }
-
-      if (method.includes("requestApproval")) {
-        const params = { ...((message.params as Record<string, unknown>) ?? {}) };
-        const rawRequestId = message.id;
-        let requestId =
-          typeof rawRequestId === "number" ? rawRequestId : Number(rawRequestId);
-        if (!Number.isFinite(requestId)) {
-          requestId = Date.now();
-        }
-        if (rawRequestId !== undefined && rawRequestId !== null) {
-          if (params.requestId === undefined) {
-            params.requestId = rawRequestId;
-          }
-          if (params.request_id === undefined) {
-            params.request_id = rawRequestId;
-          }
-        }
-        const toolUseId = String(
-          params.toolUseId ?? params.tool_use_id ?? params.toolUseID ?? "",
-        );
-        handlers.onApprovalRequest?.({
-          workspace_id,
-          request_id: requestId,
-          tool_use_id: toolUseId || String(rawRequestId ?? requestId),
-          method,
-          params,
-        });
         return;
       }
 
@@ -324,17 +285,6 @@ export function useAppServerEvents(handlers: AppServerEventHandlers) {
           (params.token_usage as Record<string, unknown> | undefined);
         if (threadId && tokenUsage) {
           handlers.onThreadTokenUsageUpdated?.(workspace_id, threadId, tokenUsage);
-        }
-        return;
-      }
-
-      if (method === "account/rateLimits/updated") {
-        const params = message.params as Record<string, unknown>;
-        const rateLimits =
-          (params.rateLimits as Record<string, unknown> | undefined) ??
-          (params.rate_limits as Record<string, unknown> | undefined);
-        if (rateLimits) {
-          handlers.onAccountRateLimitsUpdated?.(workspace_id, rateLimits);
         }
         return;
       }

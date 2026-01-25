@@ -167,56 +167,6 @@ impl WorkspaceSession {
             .map_err(|e| e.to_string())
     }
 
-    /// Send a permission response to the Claude CLI server for a specific thread.
-    ///
-    /// This is used when the CLI runs in delegate mode and requests approval.
-    pub(crate) async fn send_permission_response(
-        &self,
-        thread_id: &str,
-        tool_use_id: String,
-        decision: &str,
-        request_id: Option<Value>,
-    ) -> Result<(), String> {
-        let mut sessions = self.persistent_sessions.lock().await;
-        let session = sessions
-            .get_mut(thread_id)
-            .ok_or_else(|| format!("No persistent session for thread {}", thread_id))?;
-
-        let normalized = match decision.trim().to_lowercase().as_str() {
-            "accept" | "allow" | "yes" => "allow".to_string(),
-            "decline" | "deny" | "no" => "deny".to_string(),
-            other => other.to_string(),
-        };
-
-        let mut response = serde_json::json!({
-            "type": "permission_response",
-            "decision": normalized,
-        });
-
-        if !tool_use_id.trim().is_empty() {
-            if let Some(record) = response.as_object_mut() {
-                record.insert("tool_use_id".to_string(), Value::String(tool_use_id.clone()));
-                record.insert("toolUseId".to_string(), Value::String(tool_use_id));
-            }
-        }
-
-        if let Some(request_id) = request_id {
-            if let Some(record) = response.as_object_mut() {
-                record.insert("id".to_string(), request_id.clone());
-                record.insert("request_id".to_string(), request_id.clone());
-                record.insert("requestId".to_string(), request_id);
-            }
-        }
-
-        let mut line = serde_json::to_string(&response).map_err(|e| e.to_string())?;
-        line.push('\n');
-
-        session.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| e.to_string())
-    }
-
     /// Send a user message to the Claude CLI server for a specific thread.
     /// This is used for sending new messages in a persistent session.
     ///

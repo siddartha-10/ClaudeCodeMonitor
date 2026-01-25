@@ -87,6 +87,7 @@ import { useLiquidGlassEffect } from "./features/app/hooks/useLiquidGlassEffect"
 import { useCopyThread } from "./features/threads/hooks/useCopyThread";
 import { useTerminalController } from "./features/terminal/hooks/useTerminalController";
 import { useGitCommitController } from "./features/app/hooks/useGitCommitController";
+import { useGlobalRateLimits } from "./features/app/hooks/useGlobalRateLimits";
 import { pickWorkspacePath } from "./services/tauri";
 import type {
   AccessMode,
@@ -149,11 +150,12 @@ function MainApp() {
     clearDebugEntries,
   } = useDebugLog();
   useLiquidGlassEffect({ reduceTransparency, onDebug: addDebugEntry });
+  const { globalRateLimits } = useGlobalRateLimits();
   const [accessMode, setAccessMode] = useState<AccessMode>("current");
   const [activeTab, setActiveTab] = useState<
-    "projects" | "codex" | "git" | "log"
-  >("codex");
-  const tabletTab = activeTab === "projects" ? "codex" : activeTab;
+    "projects" | "claude" | "git" | "log"
+  >("claude");
+  const tabletTab = activeTab === "projects" ? "claude" : activeTab;
   const {
     workspaces,
     workspaceGroups,
@@ -553,7 +555,6 @@ function MainApp() {
     setActiveThreadId,
     activeThreadId,
     activeItems,
-    approvals,
     permissionDenials,
     userInputRequests,
     threadsByWorkspace,
@@ -563,7 +564,6 @@ function MainApp() {
     threadListPagingByWorkspace,
     threadListCursorByWorkspace,
     tokenUsageByThread,
-    rateLimitsByWorkspace,
     planByThread,
     lastAgentMessageByThread,
     interruptTurn,
@@ -581,8 +581,6 @@ function MainApp() {
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
@@ -688,7 +686,7 @@ function MainApp() {
     addWorktreeAgent,
     connectWorkspace,
     onSelectWorkspace: selectWorkspace,
-    onCompactActivate: isCompact ? () => setActiveTab("codex") : undefined,
+    onCompactActivate: isCompact ? () => setActiveTab("claude") : undefined,
     onError: (message) => {
       addDebugEntry({
         id: `${Date.now()}-client-add-worktree-error`,
@@ -741,7 +739,7 @@ function MainApp() {
     onSelectWorkspace: selectWorkspace,
     resolveProjectContext: resolveCloneProjectContext,
     persistProjectCopiesFolder,
-    onCompactActivate: isCompact ? () => setActiveTab("codex") : undefined,
+    onCompactActivate: isCompact ? () => setActiveTab("claude") : undefined,
     onError: (message) => {
       addDebugEntry({
         id: `${Date.now()}-client-add-clone-error`,
@@ -798,9 +796,7 @@ function MainApp() {
     [hasLoaded, threadListLoadingByWorkspace, workspaces]
   );
 
-  const activeRateLimits = activeWorkspaceId
-    ? rateLimitsByWorkspace[activeWorkspaceId] ?? null
-    : null;
+  const activeRateLimits = globalRateLimits;
   const activeTokenUsage = activeThreadId
     ? tokenUsageByThread[activeThreadId] ?? null
     : null;
@@ -833,39 +829,12 @@ function MainApp() {
   });
 
   const [usageMetric, setUsageMetric] = useState<"tokens" | "time">("tokens");
-  const [usageWorkspaceId, setUsageWorkspaceId] = useState<string | null>(null);
-  const usageWorkspaceOptions = useMemo(
-    () =>
-      workspaces.map((workspace) => {
-        const groupName = getWorkspaceGroupName(workspace.id);
-        const label = groupName
-          ? `${groupName} / ${workspace.name}`
-          : workspace.name;
-        return { id: workspace.id, label };
-      }),
-    [getWorkspaceGroupName, workspaces],
-  );
-  const usageWorkspacePath = useMemo(() => {
-    if (!usageWorkspaceId) {
-      return null;
-    }
-    return workspacesById.get(usageWorkspaceId)?.path ?? null;
-  }, [usageWorkspaceId, workspacesById]);
-  useEffect(() => {
-    if (!usageWorkspaceId) {
-      return;
-    }
-    if (workspaces.some((workspace) => workspace.id === usageWorkspaceId)) {
-      return;
-    }
-    setUsageWorkspaceId(null);
-  }, [usageWorkspaceId, workspaces]);
   const {
     snapshot: localUsageSnapshot,
     isLoading: isLoadingLocalUsage,
     error: localUsageError,
     refresh: refreshLocalUsage,
-  } = useLocalUsage(showHome, usageWorkspacePath);
+  } = useLocalUsage(showHome);
   const canInterrupt = activeThreadId
     ? threadStatusById[activeThreadId]?.isProcessing ?? false
     : false;
@@ -875,7 +844,7 @@ function MainApp() {
   const isReviewing = activeThreadId
     ? threadStatusById[activeThreadId]?.isReviewing ?? false
     : false;
-  const { plan: claudeTasksPlan } = useClaudeTasks({
+  const { plan: claudeTasksPlan, tasks: claudeTasks } = useClaudeTasks({
     activeThreadId,
     isProcessing,
   });
@@ -1102,7 +1071,7 @@ function MainApp() {
       return;
     }
     if (activeTab === "projects") {
-      setActiveTab("codex");
+      setActiveTab("claude");
     }
   }, [activeTab, isTablet]);
 
@@ -1259,7 +1228,7 @@ function MainApp() {
 
   const showComposer = !isCompact
     ? centerMode === "chat" || centerMode === "diff"
-    : (isTablet ? tabletTab : activeTab) === "codex";
+    : (isTablet ? tabletTab : activeTab) === "claude";
   const showGitDetail = Boolean(selectedDiffPath) && isPhone;
   const {
     terminalTabs,
@@ -1347,7 +1316,7 @@ function MainApp() {
     debugPanelNode,
     debugPanelFullNode,
     terminalDockNode,
-    compactEmptyCodexNode,
+    compactEmptyClaudeNode,
     compactEmptyGitNode,
     compactGitBackNode,
   } = useLayoutNodes({
@@ -1367,11 +1336,8 @@ function MainApp() {
     activeItems,
     activeRateLimits,
     codeBlockCopyUseModifier: appSettings.composerCodeBlockCopyUseModifier,
-    approvals,
     permissionDenials,
     userInputRequests,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
@@ -1393,7 +1359,7 @@ function MainApp() {
     onConnectWorkspace: async (workspace) => {
       await connectWorkspace(workspace);
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     onAddAgent: handleAddAgent,
@@ -1460,15 +1426,12 @@ function MainApp() {
     },
     usageMetric,
     onUsageMetricChange: setUsageMetric,
-    usageWorkspaceId,
-    usageWorkspaceOptions,
-    onUsageWorkspaceChange: setUsageWorkspaceId,
     onSelectHomeThread: (workspaceId, threadId) => {
       exitDiffView();
       selectWorkspace(workspaceId);
       setActiveThreadId(threadId, workspaceId);
       if (isCompact) {
-        setActiveTab("codex");
+        setActiveTab("claude");
       }
     },
     activeWorkspace,
@@ -1665,6 +1628,7 @@ function MainApp() {
     composerSendLabel,
     showComposer,
     plan: activePlan,
+    claudeTasks,
     debugEntries,
     debugOpen,
     terminalOpen,
@@ -1781,7 +1745,7 @@ function MainApp() {
         debugPanelNode={debugPanelNode}
         debugPanelFullNode={debugPanelFullNode}
         terminalDockNode={terminalDockNode}
-        compactEmptyCodexNode={compactEmptyCodexNode}
+        compactEmptyClaudeNode={compactEmptyClaudeNode}
         compactEmptyGitNode={compactEmptyGitNode}
         compactGitBackNode={compactGitBackNode}
         onSidebarResizeStart={onSidebarResizeStart}

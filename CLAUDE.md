@@ -4,7 +4,7 @@ A Tauri + React desktop application for monitoring Claude Code sessions.
 
 ## Repository Context
 
-This is a **fork** of [CodexMonitor](https://github.com/Dimillian/CodexMonitor) with Claude branding.
+This is a Claude-branded **fork** of [CodexMonitor](https://github.com/Dimillian/CodexMonitor).
 
 ### Git Remotes
 
@@ -66,7 +66,7 @@ cd src-tauri && cargo build  # Rust check
 
 ## Upstream Sync
 
-Use the `/sync-upstream` skill when integrating features from CodexMonitor.
+Use the `/sync-upstream` skill when integrating features from the upstream CodexMonitor repo.
 
 ```
 /sync-upstream check              # Check what's new

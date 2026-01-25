@@ -178,26 +178,6 @@ export async function startReview(
   return invoke("start_review", payload);
 }
 
-export async function respondToServerRequest(
-  workspaceId: string,
-  threadId: string,
-  toolUseId: string,
-  decision: "accept" | "decline",
-  requestId?: number | string,
-) {
-  const result: Record<string, unknown> = { decision };
-  if (requestId !== undefined && requestId !== null) {
-    result.requestId = requestId;
-    result.request_id = requestId;
-  }
-  return invoke("respond_to_server_request", {
-    workspaceId,
-    threadId,
-    toolUseId,
-    result,
-  });
-}
-
 export async function respondToUserInputRequest(
   workspaceId: string,
   threadId: string,
@@ -351,8 +331,10 @@ export async function getCollaborationModes(workspaceId: string) {
   return invoke<any>("collaboration_mode_list", { workspaceId });
 }
 
-export async function getAccountRateLimits(workspaceId: string) {
-  return invoke<any>("account_rate_limits", { workspaceId });
+export async function getGlobalRateLimits() {
+  return invoke<{ rateLimits: Record<string, unknown> | null }>(
+    "global_rate_limits",
+  );
 }
 
 export async function getSkillsList(workspaceId: string) {

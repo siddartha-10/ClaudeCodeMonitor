@@ -19,7 +19,7 @@ type UsePullRequestComposerOptions = {
   setCenterMode: (mode: "chat" | "diff") => void;
   setGitPanelMode: (mode: "diff" | "log" | "issues" | "prs") => void;
   setPrefillDraft: (draft: { id: string; text: string; createdAt: number }) => void;
-  setActiveTab: (tab: "projects" | "codex" | "git" | "log") => void;
+  setActiveTab: (tab: "projects" | "claude" | "git" | "log") => void;
   connectWorkspace: (workspace: WorkspaceInfo) => Promise<void>;
   startThreadForWorkspace: (workspaceId: string, options?: { activate?: boolean }) => Promise<string | null>;
   sendUserMessageToThread: (

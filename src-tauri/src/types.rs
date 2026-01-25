@@ -166,7 +166,7 @@ pub(crate) struct WorkspaceEntry {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) path: String,
-    #[serde(default, alias = "codex_bin")]
+    #[serde(default)]
     pub(crate) claude_bin: Option<String>,
     #[serde(default)]
     pub(crate) kind: WorkspaceKind,
@@ -184,7 +184,7 @@ pub(crate) struct WorkspaceInfo {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) connected: bool,
-    #[serde(default, alias = "codex_bin")]
+    #[serde(default)]
     pub(crate) claude_bin: Option<String>,
     #[serde(default)]
     pub(crate) kind: WorkspaceKind,
@@ -244,7 +244,7 @@ pub(crate) struct WorkspaceSettings {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct AppSettings {
-    #[serde(default, rename = "claudeBin", alias = "codexBin")]
+    #[serde(default, rename = "claudeBin")]
     pub(crate) claude_bin: Option<String>,
     #[serde(default, rename = "backendMode")]
     pub(crate) backend_mode: BackendMode,
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn workspace_entry_defaults_from_minimal_json() {
         let entry: WorkspaceEntry = serde_json::from_str(
-            r#"{"id":"1","name":"Test","path":"/tmp","codexBin":null}"#,
+            r#"{"id":"1","name":"Test","path":"/tmp","claudeBin":null}"#,
         )
         .expect("workspace deserialize");
         assert!(matches!(entry.kind, WorkspaceKind::Main));

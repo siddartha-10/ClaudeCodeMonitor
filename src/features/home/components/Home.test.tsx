@@ -14,9 +14,6 @@ const baseProps = {
   onRefreshLocalUsage: vi.fn(),
   usageMetric: "tokens" as const,
   onUsageMetricChange: vi.fn(),
-  usageWorkspaceId: null,
-  usageWorkspaceOptions: [],
-  onUsageWorkspaceChange: vi.fn(),
   onSelectThread: vi.fn(),
 };
 

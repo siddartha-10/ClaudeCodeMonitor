@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as Sentry from "@sentry/react";
 import type {
-  ApprovalRequest,
   AppServerEvent,
   ConversationItem,
   CustomPromptOption,
   DebugEntry,
   PermissionDenial,
-  RateLimitSnapshot,
   RequestUserInputRequest,
   ThreadSummary,
   ThreadTokenUsage,
@@ -21,7 +19,6 @@ import {
   normalizeCommandTokens,
 } from "../../../utils/approvalRules";
 import {
-  respondToServerRequest,
   rememberApprovalRule,
   sendUserMessage as sendUserMessageService,
   startReview as startReviewService,
@@ -29,7 +26,6 @@ import {
   listThreads as listThreadsService,
   resumeThread as resumeThreadService,
   archiveThread as archiveThreadService,
-  getAccountRateLimits,
   interruptTurn as interruptTurnService,
 } from "../../../services/tauri";
 import { useAppServerEvents } from "../../app/hooks/useAppServerEvents";
@@ -46,9 +42,9 @@ import { expandCustomPromptText } from "../../../utils/customPrompts";
 import { initialState, threadReducer } from "./useThreadsReducer";
 import { useThreadUserInput } from "./useThreadUserInput";
 
-const STORAGE_KEY_THREAD_ACTIVITY = "codexmonitor.threadLastUserActivity";
-const STORAGE_KEY_PINNED_THREADS = "codexmonitor.pinnedThreads";
-const STORAGE_KEY_CUSTOM_NAMES = "codexmonitor.threadCustomNames";
+const STORAGE_KEY_THREAD_ACTIVITY = "claude-code-monitor.threadLastUserActivity";
+const STORAGE_KEY_PINNED_THREADS = "claude-code-monitor.pinnedThreads";
+const STORAGE_KEY_CUSTOM_NAMES = "claude-code-monitor.threadCustomNames";
 const MAX_PINS_SOFT_LIMIT = 5;
 
 type ThreadActivityMap = Record<string, Record<string, number>>;
@@ -195,6 +191,23 @@ function normalizeRootPath(value: string) {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function isThreadInWorkspace(
+  threadCwd: string,
+  normalizedWorkspacePath: string,
+) {
+  if (!normalizedWorkspacePath) {
+    return true;
+  }
+  const normalizedThreadPath = normalizeRootPath(threadCwd);
+  if (!normalizedThreadPath) {
+    return true;
+  }
+  if (normalizedThreadPath === normalizedWorkspacePath) {
+    return true;
+  }
+  return normalizedThreadPath.startsWith(`${normalizedWorkspacePath}/`);
+}
+
 function extractRpcErrorMessage(response: unknown) {
   if (!response || typeof response !== "object") {
     return null;
@@ -290,80 +303,6 @@ function normalizeTokenUsage(raw: Record<string, unknown>): ThreadTokenUsage {
       }
       return null;
     })(),
-  };
-}
-
-function normalizeRateLimits(raw: Record<string, unknown>): RateLimitSnapshot {
-  const primary = (raw.primary as Record<string, unknown>) ?? null;
-  const secondary = (raw.secondary as Record<string, unknown>) ?? null;
-  const credits = (raw.credits as Record<string, unknown>) ?? null;
-  return {
-    primary: primary
-      ? {
-          usedPercent: asNumber(primary.usedPercent ?? primary.used_percent),
-          windowDurationMins: (() => {
-            const value = primary.windowDurationMins ?? primary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = primary.resetsAt ?? primary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    secondary: secondary
-      ? {
-          usedPercent: asNumber(secondary.usedPercent ?? secondary.used_percent),
-          windowDurationMins: (() => {
-            const value = secondary.windowDurationMins ?? secondary.window_duration_mins;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-          resetsAt: (() => {
-            const value = secondary.resetsAt ?? secondary.resets_at;
-            if (typeof value === "number") {
-              return value;
-            }
-            if (typeof value === "string") {
-              const parsed = Number(value);
-              return Number.isFinite(parsed) ? parsed : null;
-            }
-            return null;
-          })(),
-        }
-      : null,
-    credits: credits
-      ? {
-          hasCredits: Boolean(credits.hasCredits ?? credits.has_credits),
-          unlimited: Boolean(credits.unlimited),
-          balance: typeof credits.balance === "string" ? credits.balance : null,
-        }
-      : null,
-    planType: typeof raw.planType === "string"
-      ? raw.planType
-      : typeof raw.plan_type === "string"
-        ? raw.plan_type
-        : null,
   };
 }
 
@@ -547,53 +486,6 @@ export function useThreads({
     [activeThreadId, state.itemsByThread],
   );
 
-  const refreshAccountRateLimits = useCallback(
-    async (workspaceId?: string) => {
-      const targetId = workspaceId ?? activeWorkspaceId;
-      if (!targetId) {
-        return;
-      }
-      onDebug?.({
-        id: `${Date.now()}-client-account-rate-limits`,
-        timestamp: Date.now(),
-        source: "client",
-        label: "account/rateLimits/read",
-        payload: { workspaceId: targetId },
-      });
-      try {
-        const response = await getAccountRateLimits(targetId);
-        onDebug?.({
-          id: `${Date.now()}-server-account-rate-limits`,
-          timestamp: Date.now(),
-          source: "server",
-          label: "account/rateLimits/read response",
-          payload: response,
-        });
-        const rateLimits =
-          (response?.result?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.result?.rate_limits as Record<string, unknown> | undefined) ??
-          (response?.rateLimits as Record<string, unknown> | undefined) ??
-          (response?.rate_limits as Record<string, unknown> | undefined);
-        if (rateLimits) {
-          dispatch({
-            type: "setRateLimits",
-            workspaceId: targetId,
-            rateLimits: normalizeRateLimits(rateLimits),
-          });
-        }
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-account-rate-limits-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "account/rateLimits/read error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [activeWorkspaceId, onDebug],
-  );
-
   const pushThreadErrorMessage = useCallback(
     (threadId: string, message: string) => {
       dispatch({
@@ -769,14 +661,6 @@ export function useThreads({
     [handleToolOutputDelta],
   );
 
-  const handleWorkspaceConnected = useCallback(
-    (workspaceId: string) => {
-      onWorkspaceConnected(workspaceId);
-      void refreshAccountRateLimits(workspaceId);
-    },
-    [onWorkspaceConnected, refreshAccountRateLimits],
-  );
-
   const rememberApprovalPrefix = useCallback((workspaceId: string, command: string[]) => {
     const normalized = normalizeCommandTokens(command);
     if (!normalized.length) {
@@ -798,10 +682,7 @@ export function useThreads({
 
   const handlers = useMemo(
     () => ({
-      onWorkspaceConnected: handleWorkspaceConnected,
-      onApprovalRequest: (approval: ApprovalRequest) => {
-        dispatch({ type: "addApproval", approval });
-      },
+      onWorkspaceConnected,
       onRequestUserInput: (request: RequestUserInputRequest) => {
         dispatch({ type: "addUserInputRequest", request });
       },
@@ -833,8 +714,7 @@ export function useThreads({
       },
       onAppServerEvent: (event: AppServerEvent) => {
         const method = String(event.message?.method ?? "");
-        const inferredSource =
-          method === "codex/stderr" || method === "claude/stderr" ? "stderr" : "event";
+        const inferredSource = method === "claude/stderr" ? "stderr" : "event";
         onDebug?.({
           id: `${Date.now()}-server-event`,
           timestamp: Date.now(),
@@ -1050,16 +930,6 @@ export function useThreads({
           tokenUsage: normalizeTokenUsage(tokenUsage),
         });
       },
-      onAccountRateLimitsUpdated: (
-        workspaceId: string,
-        rateLimits: Record<string, unknown>,
-      ) => {
-        dispatch({
-          type: "setRateLimits",
-          workspaceId,
-          rateLimits: normalizeRateLimits(rateLimits),
-        });
-      },
       onTurnError: (
         workspaceId: string,
         threadId: string,
@@ -1087,7 +957,7 @@ export function useThreads({
     [
       activeThreadId,
       getCustomName,
-      handleWorkspaceConnected,
+      onWorkspaceConnected,
       handleItemUpdate,
       handleTerminalInteraction,
       handleToolOutputDelta,
@@ -1343,9 +1213,8 @@ export function useThreads({
           const nextCursor =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = nextCursor;
@@ -1506,9 +1375,8 @@ export function useThreads({
           const next =
             (result?.nextCursor ?? result?.next_cursor ?? null) as string | null;
           matchingThreads.push(
-            ...data.filter(
-              (thread) =>
-                normalizeRootPath(String(thread?.cwd ?? "")) === workspacePath,
+            ...data.filter((thread) =>
+              isThreadInWorkspace(asString(thread?.cwd), workspacePath),
             ),
           );
           cursor = next;
@@ -2006,72 +1874,6 @@ export function useThreads({
     ],
   );
 
-  const handleApprovalDecision = useCallback(
-    async (request: ApprovalRequest, decision: "accept" | "decline") => {
-      const threadId = String(request.params.threadId ?? request.params.thread_id ?? "");
-      const requestIdValue =
-        request.params.requestId ?? request.params.request_id ?? request.request_id;
-      const requestId =
-        typeof requestIdValue === "string" || typeof requestIdValue === "number"
-          ? requestIdValue
-          : request.request_id;
-      await respondToServerRequest(
-        request.workspace_id,
-        threadId,
-        request.tool_use_id,
-        decision,
-        requestId,
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [],
-  );
-
-  const handleApprovalRemember = useCallback(
-    async (request: ApprovalRequest, ruleInfo: ApprovalRuleInfo) => {
-      try {
-        await rememberApprovalRule(request.workspace_id, ruleInfo.rule);
-      } catch (error) {
-        onDebug?.({
-          id: `${Date.now()}-client-approval-rule-error`,
-          timestamp: Date.now(),
-          source: "error",
-          label: "approval rule error",
-          payload: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      if (ruleInfo.commandTokens) {
-        rememberApprovalPrefix(request.workspace_id, ruleInfo.commandTokens);
-      }
-
-      const threadId = String(request.params.threadId ?? request.params.thread_id ?? "");
-      const requestIdValue =
-        request.params.requestId ?? request.params.request_id ?? request.request_id;
-      const requestId =
-        typeof requestIdValue === "string" || typeof requestIdValue === "number"
-          ? requestIdValue
-          : request.request_id;
-      await respondToServerRequest(
-        request.workspace_id,
-        threadId,
-        request.tool_use_id,
-        "accept",
-        requestId,
-      );
-      dispatch({
-        type: "removeApproval",
-        requestId: request.request_id,
-        workspaceId: request.workspace_id,
-      });
-    },
-    [onDebug, rememberApprovalPrefix],
-  );
-
   const handlePermissionRemember = useCallback(
     async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
       try {
@@ -2151,17 +1953,10 @@ export function useThreads({
     [dispatch],
   );
 
-  useEffect(() => {
-    if (activeWorkspace?.connected) {
-      void refreshAccountRateLimits(activeWorkspace.id);
-    }
-  }, [activeWorkspace?.connected, activeWorkspace?.id, refreshAccountRateLimits]);
-
   return {
     activeThreadId,
     setActiveThreadId,
     activeItems,
-    approvals: state.approvals,
     permissionDenials: state.permissionDenials,
     userInputRequests: state.userInputRequests,
     threadsByWorkspace: state.threadsByWorkspace,
@@ -2172,10 +1967,8 @@ export function useThreads({
     threadListCursorByWorkspace: state.threadListCursorByWorkspace,
     activeTurnIdByThread: state.activeTurnIdByThread,
     tokenUsageByThread: state.tokenUsageByThread,
-    rateLimitsByWorkspace: state.rateLimitsByWorkspace,
     planByThread: state.planByThread,
     lastAgentMessageByThread: state.lastAgentMessageByThread,
-    refreshAccountRateLimits,
     interruptTurn,
     removeThread,
     pinThread,
@@ -2192,8 +1985,6 @@ export function useThreads({
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
-    handleApprovalDecision,
-    handleApprovalRemember,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,

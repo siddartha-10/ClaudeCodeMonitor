@@ -3,8 +3,9 @@ use tauri::Manager;
 mod backend;
 mod claude;
 mod claude_tasks;
-mod codex_home;
-mod codex_config;
+mod claude_home;
+mod claude_config;
+mod task_manager;
 #[cfg(not(target_os = "windows"))]
 #[path = "dictation.rs"]
 mod dictation;
@@ -23,6 +24,7 @@ mod state;
 mod terminal;
 mod window;
 mod storage;
+mod task_watcher;
 mod types;
 mod utils;
 mod workspaces;
@@ -45,6 +47,7 @@ pub fn run() {
         .setup(|app| {
             let state = state::AppState::load(&app.handle());
             app.manage(state);
+            app.manage(task_watcher::TaskWatcherState::default());
             #[cfg(desktop)]
             {
                 app.handle()
@@ -118,7 +121,7 @@ pub fn run() {
             git::checkout_git_branch,
             git::create_git_branch,
             claude::model_list,
-            claude::account_rate_limits,
+            claude::global_rate_limits,
             claude::skills_list,
             prompts::prompts_list,
             prompts::prompts_create,
@@ -139,7 +142,15 @@ pub fn run() {
             dictation::dictation_stop,
             dictation::dictation_cancel,
             local_usage::local_usage_snapshot,
-            claude_tasks::get_claude_tasks
+            claude_tasks::get_claude_tasks,
+            task_watcher::task_watcher_start,
+            task_watcher::task_watcher_stop,
+            task_manager::task_create,
+            task_manager::task_read,
+            task_manager::task_list_read,
+            task_manager::task_update,
+            task_manager::task_delete,
+            task_manager::task_lists_available
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

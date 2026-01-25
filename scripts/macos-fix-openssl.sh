@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_path="${1:-src-tauri/target/release/bundle/macos/CodexMonitor.app}"
+app_path="${1:-src-tauri/target/release/bundle/macos/ClaudeCodeMonitor.app}"
 identity="${CODESIGN_IDENTITY:-}"
 
 if [[ -z "${identity}" ]]; then
@@ -35,8 +35,8 @@ fi
 libssl="${openssl_prefix}/lib/libssl.3.dylib"
 libcrypto="${openssl_prefix}/lib/libcrypto.3.dylib"
 frameworks_dir="${app_path}/Contents/Frameworks"
-bin_path="${app_path}/Contents/MacOS/codex-monitor"
-daemon_path="${app_path}/Contents/MacOS/codex_monitor_daemon"
+bin_path="${app_path}/Contents/MacOS/claude-code-monitor"
+daemon_path="${app_path}/Contents/MacOS/claude_code_monitor_daemon"
 
 if [[ ! -f "${libssl}" || ! -f "${libcrypto}" ]]; then
   echo "OpenSSL dylibs not found at ${openssl_prefix}/lib"

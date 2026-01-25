@@ -48,7 +48,6 @@ describe("useAppServerEvents", () => {
       onAppServerEvent: vi.fn(),
       onWorkspaceConnected: vi.fn(),
       onAgentMessageDelta: vi.fn(),
-      onApprovalRequest: vi.fn(),
       onRequestUserInput: vi.fn(),
       onItemCompleted: vi.fn(),
       onAgentMessageCompleted: vi.fn(),
@@ -76,29 +75,6 @@ describe("useAppServerEvents", () => {
       threadId: "thread-1",
       itemId: "item-1",
       delta: "Hello",
-    });
-
-    act(() => {
-      listener?.({
-        workspace_id: "ws-1",
-        message: {
-          method: "claude/requestApproval/Bash",
-          id: 7,
-          params: { toolUseId: "toolu_approval_123", command: "ls -la" },
-        },
-      });
-    });
-    expect(handlers.onApprovalRequest).toHaveBeenCalledWith({
-      workspace_id: "ws-1",
-      request_id: 7,
-      tool_use_id: "toolu_approval_123",
-      method: "claude/requestApproval/Bash",
-      params: {
-        toolUseId: "toolu_approval_123",
-        command: "ls -la",
-        requestId: 7,
-        request_id: 7,
-      },
     });
 
     act(() => {

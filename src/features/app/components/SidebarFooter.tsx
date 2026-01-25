@@ -1,19 +1,25 @@
 type SidebarFooterProps = {
   sessionPercent: number | null;
   weeklyPercent: number | null;
+  sonnetPercent: number | null;
   sessionResetLabel: string | null;
   weeklyResetLabel: string | null;
+  sonnetResetLabel: string | null;
   creditsLabel: string | null;
   showWeekly: boolean;
+  showSonnet: boolean;
 };
 
 export function SidebarFooter({
   sessionPercent,
   weeklyPercent,
+  sonnetPercent,
   sessionResetLabel,
   weeklyResetLabel,
+  sonnetResetLabel,
   creditsLabel,
   showWeekly,
+  showSonnet,
 }: SidebarFooterProps) {
   return (
     <div className="sidebar-footer">
@@ -54,6 +60,27 @@ export function SidebarFooter({
               <span
                 className="usage-bar-fill"
                 style={{ width: `${weeklyPercent ?? 0}%` }}
+              />
+            </div>
+          </div>
+        )}
+        {showSonnet && (
+          <div className="usage-block">
+            <div className="usage-label">
+              <span className="usage-title">
+                <span>Sonnet</span>
+                {sonnetResetLabel && (
+                  <span className="usage-reset">· {sonnetResetLabel}</span>
+                )}
+              </span>
+              <span className="usage-value">
+                {sonnetPercent === null ? "--" : `${sonnetPercent}%`}
+              </span>
+            </div>
+            <div className="usage-bar">
+              <span
+                className="usage-bar-fill"
+                style={{ width: `${sonnetPercent ?? 0}%` }}
               />
             </div>
           </div>

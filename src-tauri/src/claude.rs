@@ -1,7 +1,9 @@
 use chrono::DateTime;
+use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -10,9 +12,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, State};
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
+use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::{interval, sleep, timeout};
 use uuid::Uuid;
+
+
 
 pub(crate) use crate::backend::claude_cli::WorkspaceSession;
 use crate::backend::claude_cli::{
@@ -20,7 +25,7 @@ use crate::backend::claude_cli::{
     spawn_workspace_session as spawn_workspace_session_inner,
 };
 use crate::backend::events::{AppServerEvent, EventSink};
-use crate::codex_home::{resolve_default_claude_home, resolve_workspace_claude_home};
+use crate::claude_home::{resolve_default_claude_home, resolve_workspace_claude_home};
 use crate::event_sink::TauriEventSink;
 use crate::remote_backend;
 use crate::state::{AppState, WorkspaceWatcher};
@@ -46,6 +51,18 @@ struct ClaudeSessionEntry {
     #[serde(rename = "isSidechain")]
     #[allow(dead_code)]
     is_sidechain: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCredentials {
+    claude_ai_oauth: Option<ClaudeOauth>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeOauth {
+    access_token: String,
 }
 
 pub(crate) async fn spawn_workspace_session(
@@ -516,22 +533,63 @@ pub(crate) async fn model_list(
 }
 
 #[tauri::command]
-pub(crate) async fn account_rate_limits(
-    workspace_id: String,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<Value, String> {
-    if remote_backend::is_remote_mode(&*state).await {
-        return remote_backend::call_remote(
-            &*state,
-            app,
-            "account_rate_limits",
-            json!({ "workspaceId": workspace_id }),
-        )
-        .await;
-    }
+pub(crate) async fn global_rate_limits() -> Result<Value, String> {
+    let token = match read_oauth_token().await {
+        Some(t) => t,
+        None => return Ok(json!({ "rateLimits": null })),
+    };
+    let usage: Value = Client::new()
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let window = |key: &str| -> Option<Value> {
+        let w = usage.get(key)?;
+        let pct = w.get("utilization")?.as_f64()?;
+        let resets = w.get("resets_at").and_then(|v| v.as_str()).and_then(|s| {
+            DateTime::parse_from_rfc3339(s).ok().map(|t| t.timestamp_millis())
+        });
+        Some(json!({ "usedPercent": pct, "resetsAt": resets }))
+    };
+    Ok(json!({
+        "rateLimits": {
+            "primary": window("five_hour"),
+            "secondary": window("seven_day"),
+            "sonnet": window("seven_day_sonnet"),
+        }
+    }))
+}
 
-    Ok(json!({ "rateLimits": {} }))
+#[cfg(target_os = "macos")]
+async fn read_oauth_token() -> Option<String> {
+    let user = env::var("USER").unwrap_or_default();
+    let output = Command::new("security")
+        .args(["find-generic-password", "-a", &user, "-s", "Claude Code-credentials", "-w"])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let creds: ClaudeCredentials = serde_json::from_str(raw.trim()).ok()?;
+    Some(creds.claude_ai_oauth?.access_token)
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn read_oauth_token() -> Option<String> {
+    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).ok()?;
+    let path = PathBuf::from(home).join(".claude").join(".credentials.json");
+    let raw = fs::read_to_string(&path).ok()?;
+    let creds: ClaudeCredentials = serde_json::from_str(&raw).ok()?;
+    Some(creds.claude_ai_oauth?.access_token)
 }
 
 #[tauri::command]
@@ -578,18 +636,7 @@ pub(crate) async fn respond_to_server_request(
         .get(&workspace_id)
         .ok_or("workspace not connected")?;
 
-    if let Some(decision) = result.get("decision").and_then(|value| value.as_str()) {
-        let request_id = result
-            .get("request_id")
-            .or_else(|| result.get("requestId"))
-            .or_else(|| result.get("id"))
-            .cloned();
-        session
-            .send_permission_response(&thread_id, tool_use_id, decision, request_id)
-            .await
-    } else {
-        session.send_response(&thread_id, tool_use_id, result).await
-    }
+    session.send_response(&thread_id, tool_use_id, result).await
 }
 
 /// Gets the diff content for commit message generation
@@ -1147,89 +1194,6 @@ async fn read_persistent_stdout(
 
                 let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let subtype = value.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
-
-                let is_permission_request = matches!(
-                    event_type,
-                    "permission_request" | "permission-request" | "permissionRequest"
-                ) || (
-                    event_type == "permission"
-                        && matches!(subtype, "request" | "permission_request" | "permission-request")
-                ) || (
-                    event_type == "system"
-                        && matches!(subtype, "permission_request" | "permission-request")
-                );
-
-                if is_permission_request {
-                    let request_id = value
-                        .get("id")
-                        .and_then(value_to_u64)
-                        .or_else(|| value.get("request_id").and_then(value_to_u64))
-                        .or_else(|| value.get("requestId").and_then(value_to_u64))
-                        .unwrap_or_else(|| {
-                            request_id_counter += 1;
-                            request_id_counter
-                        });
-                    let tool_use_id = value
-                        .get("tool_use_id")
-                        .or_else(|| value.get("toolUseId"))
-                        .or_else(|| value.get("toolUseID"))
-                        .and_then(|v| v.as_str())
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| request_id.to_string());
-                    let tool_name = value
-                        .get("tool_name")
-                        .or_else(|| value.get("toolName"))
-                        .or_else(|| value.get("tool"))
-                        .or_else(|| value.get("name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Tool")
-                        .trim()
-                        .to_string();
-                    let tool_input = value
-                        .get("tool_input")
-                        .or_else(|| value.get("toolInput"))
-                        .or_else(|| value.get("input"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
-
-                    let mut params = json!({
-                        "threadId": thread_id,
-                        "turnId": current_turn_id,
-                        "toolUseId": tool_use_id,
-                        "tool_name": tool_name.clone(),
-                        "toolInput": tool_input.clone(),
-                    });
-                    if let Some(command) = tool_input.get("command").and_then(|v| v.as_str()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("command".to_string(), Value::String(command.to_string()));
-                        }
-                    }
-                    if let Some(args) = tool_input.get("args").and_then(|v| v.as_array()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("args".to_string(), Value::Array(args.clone()));
-                        }
-                    }
-                    if let Some(argv) = tool_input.get("argv").and_then(|v| v.as_array()) {
-                        if let Some(record) = params.as_object_mut() {
-                            record.insert("argv".to_string(), Value::Array(argv.clone()));
-                        }
-                    }
-
-                    let method = if tool_name.is_empty() {
-                        "claude/requestApproval".to_string()
-                    } else {
-                        format!("claude/requestApproval/{tool_name}")
-                    };
-
-                    emit_event_with_id(
-                        &event_sink,
-                        &workspace_id,
-                        &method,
-                        request_id,
-                        params,
-                    );
-                    continue;
-                }
 
                 // Handle system init event
                 if event_type == "system" {
@@ -2649,14 +2613,6 @@ fn value_to_millis(value: &Value) -> Option<i64> {
     }
 }
 
-fn value_to_u64(value: &Value) -> Option<u64> {
-    match value {
-        Value::String(value) => value.parse::<u64>().ok(),
-        Value::Number(value) => value.as_u64(),
-        _ => None,
-    }
-}
-
 fn resolve_project_dir(entry: &WorkspaceEntry) -> Option<PathBuf> {
     let projects_root = resolve_default_claude_home()?.join("projects");
     Some(projects_root.join(encode_project_path(&entry.path)))
@@ -3097,6 +3053,7 @@ fn usage_number(map: &Map<String, Value>, keys: &[&str]) -> i64 {
     }
     0
 }
+
 
 async fn build_review_prompt(
     workspace_id: &str,

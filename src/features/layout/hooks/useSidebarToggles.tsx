@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
-const SIDEBAR_COLLAPSED_KEY = "codexmonitor.sidebarCollapsed";
-const RIGHT_PANEL_COLLAPSED_KEY = "codexmonitor.rightPanelCollapsed";
+const SIDEBAR_COLLAPSED_KEY = "claude-code-monitor.sidebarCollapsed";
+const RIGHT_PANEL_COLLAPSED_KEY = "claude-code-monitor.rightPanelCollapsed";
 
 type UseSidebarTogglesOptions = {
   isCompact: boolean;
@@ -11,7 +11,11 @@ function readStoredBool(key: string) {
   if (typeof window === "undefined") {
     return false;
   }
-  return window.localStorage.getItem(key) === "true";
+  const raw = window.localStorage.getItem(key);
+  if (raw === null) {
+    return false;
+  }
+  return raw === "true";
 }
 
 export function useSidebarToggles({ isCompact }: UseSidebarTogglesOptions) {

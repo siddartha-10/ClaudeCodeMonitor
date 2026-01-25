@@ -3,17 +3,17 @@
 <img width="1198" height="698" alt="image" src="https://github.com/user-attachments/assets/d16eb549-4297-4e73-8ffc-2e18ae594ac4" />
 
 
-ClaudeCodeMonitor is a macOS Tauri app for orchestrating multiple Codex agents across local workspaces. It provides a sidebar to manage projects, a home screen for quick actions, and a conversation view backed by the Codex app-server protocol.
+ClaudeCodeMonitor is a macOS Tauri app for orchestrating multiple Claude Code agents across local workspaces. It provides a sidebar to manage projects, a home screen for quick actions, and a conversation view backed by the Claude app-server protocol.
 
 ## Features
 
 ### Workspaces & Threads
 
 - Add and persist workspaces, group/sort them, and jump into recent agent activity from the home dashboard.
-- Spawn one `codex app-server` per workspace, resume threads, and track unread/running state.
-- Worktree and clone agents for isolated work; worktrees live under the app data directory (legacy `.codex-worktrees` supported).
+- Spawn one `claude app-server` per workspace, resume threads, and track unread/running state.
+- Worktree and clone agents for isolated work; worktrees live under the app data directory.
 - Thread management: pin/rename/archive/copy, per-thread drafts, and stop/interrupt in-flight turns.
-- Optional remote backend (daemon) mode for running Codex on another machine.
+- Optional remote backend (daemon) mode for running Claude on another machine.
 
 ### Composer & Agent Controls
 
@@ -21,7 +21,7 @@ ClaudeCodeMonitor is a macOS Tauri app for orchestrating multiple Codex agents a
 - Autocomplete for skills (`$`), prompts (`/prompts:`), reviews (`/review`), and file paths (`@`).
 - Model picker, collaboration modes (when enabled), reasoning effort, access mode, and context usage ring.
 - Dictation with hold-to-talk shortcuts and live waveform (Whisper).
-- Render reasoning/tool/diff items and handle approval prompts.
+- Render reasoning/tool/diff items and handle permission denials.
 
 ### Git & GitHub
 
@@ -48,11 +48,11 @@ ClaudeCodeMonitor is a macOS Tauri app for orchestrating multiple Codex agents a
 - Node.js + npm
 - Rust toolchain (stable)
 - CMake (required for native dependencies; Whisper/dictation uses it on non-Windows)
-- Codex installed on your system and available as `codex` in `PATH`
+- Claude Code installed on your system and available as `claude` in `PATH`
 - Git CLI (used for worktree operations)
 - GitHub CLI (`gh`) for the Issues panel (optional)
 
-If the `codex` binary is not in `PATH`, update the backend to pass a custom path per workspace.
+If the `claude` binary is not in `PATH`, update the backend to pass a custom path per workspace.
 If you hit native build errors, run:
 
 ```bash
@@ -117,24 +117,24 @@ src/
   styles/           split CSS by area
   types.ts          shared types
 src-tauri/
-  src/lib.rs        Tauri backend + codex app-server client
+  src/lib.rs        Tauri backend + Claude app-server client
   tauri.conf.json   window configuration
 ```
 
 ## Notes
 
 - Workspaces persist to `workspaces.json` under the app data directory.
-- App settings persist to `settings.json` under the app data directory (Codex path, default access mode, UI scale).
-- Experimental settings supported in the UI: Collab mode (`features.collab`), Background terminal (`features.unified_exec`), and Steer mode (`features.steer`), synced to `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`) on load/save.
+- App settings persist to `settings.json` under the app data directory (Claude path, default access mode, UI scale).
+- Experimental settings supported in the UI: Collab mode (`features.collab`), Background terminal (`features.unified_exec`), and Steer mode (`features.steer`), synced to `$CLAUDE_HOME/config.toml` (legacy `$CODEX_HOME` is still supported) on load/save.
 - On launch and on window focus, the app reconnects and refreshes thread lists for each workspace.
 - Threads are restored by filtering `thread/list` results using the workspace `cwd`.
 - Selecting a thread always calls `thread/resume` to refresh messages from disk.
 - CLI sessions appear if their `cwd` matches the workspace path; they are not live-streamed unless resumed.
-- The app uses `codex app-server` over stdio; see `src-tauri/src/lib.rs`.
-- Codex sessions use the default Codex home (usually `~/.codex`); if a legacy `.codexmonitor/` exists in a workspace, it is used for that workspace.
-- Worktree agents live under the app data directory (`worktrees/<workspace-id>`); legacy `.codex-worktrees/` paths remain supported, and the app no longer edits repo `.gitignore` files.
+- The app uses `claude app-server` over stdio; see `src-tauri/src/lib.rs`.
+- Claude sessions use the default Claude home (usually `~/.claude`); legacy `.codexmonitor/` in a workspace is still honored.
+- Worktree agents live under the app data directory (`worktrees/<workspace-id>`); the app no longer edits repo `.gitignore` files.
 - UI state (panel sizes, reduced transparency toggle, recent thread activity) is stored in `localStorage`.
-- Custom prompts load from `$CODEX_HOME/prompts` (or `~/.codex/prompts`) with optional frontmatter description/argument hints.
+- Custom prompts load from `$CLAUDE_HOME/prompts` (legacy `$CODEX_HOME` supported) with optional frontmatter description/argument hints.
 
 ## Tauri IPC Surface
 

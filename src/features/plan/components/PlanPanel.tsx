@@ -1,7 +1,11 @@
-import type { TurnPlan } from "../../../types";
+import { useState } from "react";
+import type { ClaudeTask, TurnPlan } from "../../../types";
+import { TaskListPanel } from "../../tasks/components/TaskListPanel";
+import { TaskDetailModal } from "../../tasks/components/TaskDetailModal";
 
 type PlanPanelProps = {
   plan: TurnPlan | null;
+  tasks?: ClaudeTask[];
   isProcessing: boolean;
 };
 
@@ -24,7 +28,29 @@ function statusLabel(status: TurnPlan["steps"][number]["status"]) {
   return "[ ]";
 }
 
-export function PlanPanel({ plan, isProcessing }: PlanPanelProps) {
+export function PlanPanel({ plan, tasks, isProcessing }: PlanPanelProps) {
+  const [selectedTask, setSelectedTask] = useState<ClaudeTask | null>(null);
+
+  // If we have full task data, use the new TaskListPanel
+  if (tasks && tasks.length > 0) {
+    return (
+      <>
+        <TaskListPanel
+          tasks={tasks}
+          onTaskClick={setSelectedTask}
+        />
+        {selectedTask && (
+          <TaskDetailModal
+            task={selectedTask}
+            allTasks={tasks}
+            onClose={() => setSelectedTask(null)}
+          />
+        )}
+      </>
+    );
+  }
+
+  // Fall back to legacy TurnPlan display
   const progress = plan ? formatProgress(plan) : "";
   const steps = plan?.steps ?? [];
   const showEmpty = !steps.length && !plan?.explanation;
