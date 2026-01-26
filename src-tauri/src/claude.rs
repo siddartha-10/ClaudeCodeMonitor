@@ -746,7 +746,6 @@ pub(crate) async fn global_rate_limits() -> Result<Value, String> {
     let usage: Value = Client::new()
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {token}"))
-        .header("anthropic-beta", "oauth-2025-04-20")
         .timeout(Duration::from_secs(10))
         .send()
         .await
