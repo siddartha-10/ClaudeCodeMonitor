@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Manager, RunEvent, WindowEvent};
 
 mod backend;
 mod claude;
@@ -44,6 +44,16 @@ pub fn run() {
         .manage(menu::MenuItemRegistry::<tauri::Wry>::default())
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let state = state::AppState::load(&app.handle());
             app.manage(state);
@@ -59,7 +69,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_liquid_glass::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -67,6 +77,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             settings::get_app_settings,
             settings::update_app_settings,
+            settings::read_global_claude_settings,
+            settings::write_global_claude_settings,
+            settings::read_global_claude_md,
+            settings::write_global_claude_md,
             menu::menu_set_accelerators,
             claude::claude_doctor,
             workspaces::list_workspaces,
@@ -116,6 +130,8 @@ pub fn run() {
             git::get_github_pull_request_comments,
             workspaces::list_workspace_files,
             workspaces::read_workspace_file,
+            workspaces::read_claude_md,
+            workspaces::write_claude_md,
             workspaces::open_workspace_in,
             git::list_git_branches,
             git::checkout_git_branch,
@@ -153,6 +169,15 @@ pub fn run() {
             task_manager::task_delete,
             task_manager::task_lists_available
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::Reopen { .. } = event {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    });
 }

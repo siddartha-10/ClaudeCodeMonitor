@@ -54,6 +54,12 @@ export type ConversationItem =
   | { id: string; kind: "review"; state: "started" | "completed"; text: string }
   | {
       id: string;
+      kind: "explore";
+      status: "exploring" | "explored";
+      entries: { kind: "read" | "search" | "list" | "run"; label: string; detail?: string }[];
+    }
+  | {
+      id: string;
       kind: "tool";
       toolType: string;
       title: string;
@@ -168,6 +174,7 @@ export type RequestUserInputQuestion = {
   id: string;
   header: string;
   question: string;
+  isOther?: boolean;
   options?: RequestUserInputOption[];
 };
 
@@ -203,12 +210,24 @@ export type GitFileStatus = {
 export type GitFileDiff = {
   path: string;
   diff: string;
+  isBinary?: boolean;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 export type GitCommitDiff = {
   path: string;
   status: string;
   diff: string;
+  isBinary?: boolean;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 export type GitLogEntry = {

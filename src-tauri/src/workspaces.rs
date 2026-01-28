@@ -24,7 +24,7 @@ use crate::storage::write_workspaces;
 use crate::types::{
     WorkspaceEntry, WorkspaceInfo, WorkspaceKind, WorkspaceSettings, WorktreeInfo,
 };
-use crate::utils::normalize_git_path;
+use crate::utils::{git_env_path, normalize_git_path, resolve_git_binary};
 
 fn should_skip_dir(name: &str) -> bool {
     matches!(
@@ -112,11 +112,88 @@ fn list_workspace_files_inner(root: &PathBuf, max_files: usize) -> Vec<String> {
 }
 
 const MAX_WORKSPACE_FILE_BYTES: u64 = 400_000;
+const CLAUDE_MD_FILENAME: &str = "CLAUDE.md";
+const MAX_CLAUDE_MD_BYTES: u64 = 100_000;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct WorkspaceFileResponse {
     content: String,
     truncated: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub(crate) struct ClaudeMdResponse {
+    pub exists: bool,
+    pub content: String,
+    pub truncated: bool,
+}
+
+fn read_claude_md_inner(root: &PathBuf) -> Result<ClaudeMdResponse, String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|err| format!("Failed to resolve workspace root: {err}"))?;
+    let claude_md_path = canonical_root.join(CLAUDE_MD_FILENAME);
+
+    if !claude_md_path.exists() {
+        return Ok(ClaudeMdResponse {
+            exists: false,
+            content: String::new(),
+            truncated: false,
+        });
+    }
+
+    let canonical_path = claude_md_path
+        .canonicalize()
+        .map_err(|err| format!("Failed to resolve CLAUDE.md path: {err}"))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err("Invalid file path".to_string());
+    }
+
+    let metadata = std::fs::metadata(&canonical_path)
+        .map_err(|err| format!("Failed to read file metadata: {err}"))?;
+    if !metadata.is_file() {
+        return Err("Path is not a file".to_string());
+    }
+
+    let file = File::open(&canonical_path)
+        .map_err(|err| format!("Failed to open file: {err}"))?;
+    let mut buffer = Vec::new();
+    file.take(MAX_CLAUDE_MD_BYTES + 1)
+        .read_to_end(&mut buffer)
+        .map_err(|err| format!("Failed to read file: {err}"))?;
+
+    let truncated = buffer.len() > MAX_CLAUDE_MD_BYTES as usize;
+    if truncated {
+        buffer.truncate(MAX_CLAUDE_MD_BYTES as usize);
+    }
+
+    let content = String::from_utf8(buffer)
+        .map_err(|_| "File is not valid UTF-8".to_string())?;
+
+    Ok(ClaudeMdResponse {
+        exists: true,
+        content,
+        truncated,
+    })
+}
+
+fn write_claude_md_inner(root: &PathBuf, content: &str) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|err| format!("Failed to resolve workspace root: {err}"))?;
+    let claude_md_path = canonical_root.join(CLAUDE_MD_FILENAME);
+
+    // Ensure the path is within the workspace root
+    if let Ok(canonical_path) = claude_md_path.canonicalize() {
+        if !canonical_path.starts_with(&canonical_root) {
+            return Err("Invalid file path".to_string());
+        }
+    }
+
+    std::fs::write(&claude_md_path, content)
+        .map_err(|err| format!("Failed to write CLAUDE.md: {err}"))?;
+
+    Ok(())
 }
 
 fn read_workspace_file_inner(
@@ -182,6 +259,57 @@ pub(crate) async fn read_workspace_file(
     read_workspace_file_inner(&root, &path)
 }
 
+#[tauri::command]
+pub(crate) async fn read_claude_md(
+    workspace_id: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<ClaudeMdResponse, String> {
+    if remote_backend::is_remote_mode(&*state).await {
+        let response = remote_backend::call_remote(
+            &*state,
+            app,
+            "read_claude_md",
+            json!({ "workspaceId": workspace_id }),
+        )
+        .await?;
+        return serde_json::from_value(response).map_err(|err| err.to_string());
+    }
+
+    let workspaces = state.workspaces.lock().await;
+    let entry = workspaces
+        .get(&workspace_id)
+        .ok_or("workspace not found")?;
+    let root = PathBuf::from(&entry.path);
+    read_claude_md_inner(&root)
+}
+
+#[tauri::command]
+pub(crate) async fn write_claude_md(
+    workspace_id: String,
+    content: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    if remote_backend::is_remote_mode(&*state).await {
+        remote_backend::call_remote(
+            &*state,
+            app,
+            "write_claude_md",
+            json!({ "workspaceId": workspace_id, "content": content }),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let workspaces = state.workspaces.lock().await;
+    let entry = workspaces
+        .get(&workspace_id)
+        .ok_or("workspace not found")?;
+    let root = PathBuf::from(&entry.path);
+    write_claude_md_inner(&root, &content)
+}
+
 fn sort_workspaces(list: &mut Vec<WorkspaceInfo>) {
     list.sort_by(|a, b| {
         let a_order = a.settings.sort_order.unwrap_or(u32::MAX);
@@ -208,9 +336,11 @@ fn apply_workspace_settings_update(
 }
 
 async fn run_git_command(repo_path: &PathBuf, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -237,9 +367,11 @@ fn is_missing_worktree_error(error: &str) -> bool {
 }
 
 async fn run_git_command_bytes(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -262,9 +394,11 @@ async fn run_git_command_bytes(repo_path: &PathBuf, args: &[&str]) -> Result<Vec
 }
 
 async fn run_git_diff(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -287,9 +421,11 @@ async fn run_git_diff(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, Str
 }
 
 async fn git_branch_exists(repo_path: &PathBuf, branch: &str) -> Result<bool, String> {
-    let status = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let status = Command::new(git_bin)
         .args(["show-ref", "--verify", &format!("refs/heads/{branch}")])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .status()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -297,9 +433,11 @@ async fn git_branch_exists(repo_path: &PathBuf, branch: &str) -> Result<bool, St
 }
 
 async fn git_remote_exists(repo_path: &PathBuf, remote: &str) -> Result<bool, String> {
-    let status = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let status = Command::new(git_bin)
         .args(["remote", "get-url", remote])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .status()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -311,7 +449,8 @@ async fn git_remote_branch_exists(
     remote: &str,
     branch: &str,
 ) -> Result<bool, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args([
             "ls-remote",
             "--heads",
@@ -319,6 +458,7 @@ async fn git_remote_branch_exists(
             &format!("refs/heads/{branch}"),
         ])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -1299,9 +1439,11 @@ pub(crate) async fn apply_worktree_changes(
         return Err("No changes to apply.".to_string());
     }
 
-    let mut child = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let mut child = Command::new(git_bin)
         .args(["apply", "--3way", "--whitespace=nowarn", "-"])
         .current_dir(&parent_root)
+        .env("PATH", git_env_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

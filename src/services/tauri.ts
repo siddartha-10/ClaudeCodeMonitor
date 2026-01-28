@@ -22,6 +22,22 @@ import type {
   ReviewTarget,
 } from "../types";
 
+/**
+ * Detect whether an error is due to a missing Tauri invoke bridge.
+ * This can happen when the app runs outside of Tauri (e.g., in a browser).
+ */
+export function isMissingTauriInvokeError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("__tauri_internals__") ||
+    msg.includes("window.__tauri") ||
+    msg.includes("invoke bridge")
+  );
+}
+
 export async function pickWorkspacePath(): Promise<string | null> {
   const selection = await open({ directory: true, multiple: false });
   if (!selection || Array.isArray(selection)) {
@@ -47,7 +63,14 @@ export async function pickImageFiles(): Promise<string[]> {
 }
 
 export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
-  return invoke<WorkspaceInfo[]>("list_workspaces");
+  try {
+    return await invoke<WorkspaceInfo[]>("list_workspaces");
+  } catch (error) {
+    if (isMissingTauriInvokeError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function addWorkspace(
@@ -445,6 +468,53 @@ export async function readWorkspaceFile(
     workspaceId,
     path,
   });
+}
+
+export type ClaudeMdResponse = {
+  exists: boolean;
+  content: string;
+  truncated: boolean;
+};
+
+export async function readClaudeMd(
+  workspaceId: string,
+): Promise<ClaudeMdResponse> {
+  return invoke<ClaudeMdResponse>("read_claude_md", { workspaceId });
+}
+
+export async function writeClaudeMd(
+  workspaceId: string,
+  content: string,
+): Promise<void> {
+  return invoke("write_claude_md", { workspaceId, content });
+}
+
+export type GlobalClaudeSettingsResponse = {
+  exists: boolean;
+  content: string;
+  truncated: boolean;
+};
+
+export async function readGlobalClaudeSettings(): Promise<GlobalClaudeSettingsResponse> {
+  return invoke<GlobalClaudeSettingsResponse>("read_global_claude_settings");
+}
+
+export async function writeGlobalClaudeSettings(content: string): Promise<void> {
+  return invoke("write_global_claude_settings", { content });
+}
+
+export type GlobalClaudeMdResponse = {
+  exists: boolean;
+  content: string;
+  truncated: boolean;
+};
+
+export async function readGlobalClaudeMd(): Promise<GlobalClaudeMdResponse> {
+  return invoke<GlobalClaudeMdResponse>("read_global_claude_md");
+}
+
+export async function writeGlobalClaudeMd(content: string): Promise<void> {
+  return invoke("write_global_claude_md", { content });
 }
 
 export async function listGitBranches(workspaceId: string) {

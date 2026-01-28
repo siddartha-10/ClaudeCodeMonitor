@@ -75,6 +75,7 @@ import { useWorkspaceSelection } from "./features/workspaces/hooks/useWorkspaceS
 import { useLocalUsage } from "./features/home/hooks/useLocalUsage";
 import { useClaudeTasks } from "./features/plan/hooks/useClaudeTasks";
 import { useWorkspaceHome } from "./features/workspaces/hooks/useWorkspaceHome";
+import { useWorkspaceClaudeMd } from "./features/workspaces/hooks/useWorkspaceClaudeMd";
 import { useGitHubPanelController } from "./features/app/hooks/useGitHubPanelController";
 import { useSettingsModalState } from "./features/app/hooks/useSettingsModalState";
 import { usePersistComposerSettings } from "./features/app/hooks/usePersistComposerSettings";
@@ -828,6 +829,46 @@ function MainApp() {
     startThreadForWorkspace,
     sendUserMessageToThread,
   });
+  const {
+    content: claudeMdContent,
+    exists: claudeMdExists,
+    truncated: claudeMdTruncated,
+    isLoading: claudeMdIsLoading,
+    isSaving: claudeMdIsSaving,
+    error: claudeMdError,
+    isDirty: claudeMdIsDirty,
+    setContent: setClaudeMdContent,
+    refresh: refreshClaudeMd,
+    save: saveClaudeMd,
+  } = useWorkspaceClaudeMd({ activeWorkspace });
+  const RECENT_THREAD_LIMIT = 8;
+  const { recentThreadInstances, recentThreadsUpdatedAt } = useMemo(() => {
+    if (!activeWorkspaceId) {
+      return { recentThreadInstances: [], recentThreadsUpdatedAt: null };
+    }
+    const threads = threadsByWorkspace[activeWorkspaceId] ?? [];
+    if (threads.length === 0) {
+      return { recentThreadInstances: [], recentThreadsUpdatedAt: null };
+    }
+    const sorted = [...threads].sort((a, b) => b.updatedAt - a.updatedAt);
+    const slice = sorted.slice(0, RECENT_THREAD_LIMIT);
+    const updatedAt = slice.reduce(
+      (max, thread) => (thread.updatedAt > max ? thread.updatedAt : max),
+      0,
+    );
+    const instances = slice.map((thread, index) => ({
+      id: `recent-${thread.id}`,
+      workspaceId: activeWorkspaceId,
+      threadId: thread.id,
+      modelId: null,
+      modelLabel: thread.name?.trim() || "Untitled thread",
+      sequence: index + 1,
+    }));
+    return {
+      recentThreadInstances: instances,
+      recentThreadsUpdatedAt: updatedAt > 0 ? updatedAt : null,
+    };
+  }, [activeWorkspaceId, threadsByWorkspace]);
 
   const [usageMetric, setUsageMetric] = useState<"tokens" | "time">("tokens");
   const {
@@ -1661,6 +1702,8 @@ function MainApp() {
     // Workspace Home props
     showWorkspaceHome,
     workspaceRuns,
+    recentThreadInstances,
+    recentThreadsUpdatedAt,
     workspacePrompt,
     setWorkspacePrompt,
     startWorkspaceRun,
@@ -1672,6 +1715,17 @@ function MainApp() {
     workspaceRunError,
     workspaceRunSubmitting,
     handleSelectWorkspaceInstance,
+    // CLAUDE.md editor props
+    claudeMdContent,
+    claudeMdExists,
+    claudeMdTruncated,
+    claudeMdIsLoading,
+    claudeMdIsSaving,
+    claudeMdError,
+    claudeMdIsDirty,
+    onClaudeMdContentChange: setClaudeMdContent,
+    onClaudeMdRefresh: refreshClaudeMd,
+    onClaudeMdSave: saveClaudeMd,
   });
 
   const desktopTopbarLeftNodeWithToggle = !isCompact ? (

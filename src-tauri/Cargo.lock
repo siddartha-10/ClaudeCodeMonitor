@@ -563,6 +563,7 @@ dependencies = [
 name = "claude-code-monitor"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "chrono",
  "cpal",

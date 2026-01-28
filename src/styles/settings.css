@@ -602,6 +602,42 @@
   font-size: 12px;
 }
 
+.settings-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-control);
+  color: var(--text-strong);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.settings-textarea--code {
+  font-family: "SF Mono", "Fira Mono", "Menlo", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-error {
+  font-size: 11px;
+  color: var(--status-error);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 120, 120, 0.1);
+  border: 1px solid rgba(255, 120, 120, 0.3);
+}
+
+.settings-warning {
+  font-size: 11px;
+  color: var(--status-warning, #f5a623);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(245, 166, 35, 0.1);
+  border: 1px solid rgba(245, 166, 35, 0.3);
+}
+
 .settings-toggle-row {
   display: flex;
   align-items: center;

@@ -1043,6 +1043,17 @@ export function useThreads({
       if (!force && loadedThreads.current[threadId]) {
         return threadId;
       }
+      const threadStatus = state.threadStatusById[threadId];
+      if (threadStatus?.isProcessing && loadedThreads.current[threadId] && !force) {
+        onDebug?.({
+          id: `${Date.now()}-client-thread-resume-skipped`,
+          timestamp: Date.now(),
+          source: "client",
+          label: "thread/resume skipped",
+          payload: { workspaceId, threadId, reason: "active-turn" },
+        });
+        return threadId;
+      }
       onDebug?.({
         id: `${Date.now()}-client-thread-resume`,
         timestamp: Date.now(),
@@ -1132,7 +1143,7 @@ export function useThreads({
         return null;
       }
     },
-    [applyCollabThreadLinksFromThread, getCustomName, onDebug, state.itemsByThread],
+    [applyCollabThreadLinksFromThread, getCustomName, onDebug, state.itemsByThread, state.threadStatusById],
   );
 
   const refreshThread = useCallback(
@@ -1163,18 +1174,26 @@ export function useThreads({
   );
 
   const listThreadsForWorkspace = useCallback(
-    async (workspace: WorkspaceInfo) => {
+    async (
+      workspace: WorkspaceInfo,
+      options?: {
+        preserveState?: boolean;
+      },
+    ) => {
+      const preserveState = options?.preserveState ?? false;
       const workspacePath = normalizeRootPath(workspace.path);
-      dispatch({
-        type: "setThreadListLoading",
-        workspaceId: workspace.id,
-        isLoading: true,
-      });
-      dispatch({
-        type: "setThreadListCursor",
-        workspaceId: workspace.id,
-        cursor: null,
-      });
+      if (!preserveState) {
+        dispatch({
+          type: "setThreadListLoading",
+          workspaceId: workspace.id,
+          isLoading: true,
+        });
+        dispatch({
+          type: "setThreadListCursor",
+          workspaceId: workspace.id,
+          cursor: null,
+        });
+      }
       onDebug?.({
         id: `${Date.now()}-client-thread-list`,
         timestamp: Date.now(),
@@ -1316,11 +1335,13 @@ export function useThreads({
           payload: error instanceof Error ? error.message : String(error),
         });
       } finally {
-        dispatch({
-          type: "setThreadListLoading",
-          workspaceId: workspace.id,
-          isLoading: false,
-        });
+        if (!preserveState) {
+          dispatch({
+            type: "setThreadListLoading",
+            workspaceId: workspace.id,
+            isLoading: false,
+          });
+        }
       }
     },
     [applyParentLinksFromThreads, getCustomName, onDebug],
@@ -1916,7 +1937,7 @@ export function useThreads({
             reason: "select",
           },
         });
-        void resumeThreadForWorkspace(targetId, threadId, true);
+        void resumeThreadForWorkspace(targetId, threadId);
       }
     },
     [activeWorkspaceId, resumeThreadForWorkspace],

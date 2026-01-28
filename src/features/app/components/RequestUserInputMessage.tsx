@@ -70,11 +70,13 @@ export function RequestUserInputMessage({
   const buildAnswers = () => {
     const answers: RequestUserInputResponse["answers"] = {};
     questions.forEach((question, index) => {
-      const key = question.id || `question-${index}`;
       const answerList: string[] = [];
+      const key = question.id || `question-${index}`;
       const selectedIndex = selections[key];
-      if (question.options?.length && selectedIndex !== null) {
-        const selected = question.options[selectedIndex];
+      const options = question.options ?? [];
+      const hasOptions = options.length > 0;
+      if (hasOptions && selectedIndex !== null) {
+        const selected = options[selectedIndex];
         const selectedValue =
           selected?.label?.trim() || selected?.description?.trim() || "";
         if (selectedValue) {
@@ -83,7 +85,7 @@ export function RequestUserInputMessage({
       }
       const note = (notes[key] ?? "").trim();
       if (note) {
-        if (question.options?.length) {
+        if (hasOptions) {
           answerList.push(`user_note: ${note}`);
         } else {
           answerList.push(note);
@@ -127,7 +129,9 @@ export function RequestUserInputMessage({
               const questionId = question.id || `question-${index}`;
               const selectedIndex = selections[questionId];
               const options = question.options ?? [];
-              const notePlaceholder = options.length
+              const notePlaceholder = question.isOther
+                ? "Type your answer (optional)"
+                : options.length
                 ? "Add notes (optional)"
                 : "Type your answer (optional)";
               return (

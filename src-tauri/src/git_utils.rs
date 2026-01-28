@@ -7,6 +7,23 @@ use ignore::WalkBuilder;
 use crate::types::{GitLogEntry, WorkspaceEntry};
 use crate::utils::normalize_git_path;
 
+pub(crate) fn image_mime_type(path: &str) -> Option<&'static str> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        _ => None,
+    }
+}
+
 pub(crate) fn commit_to_entry(commit: git2::Commit) -> GitLogEntry {
     let summary = commit.summary().unwrap_or("").to_string();
     let author = commit.author().name().unwrap_or("").to_string();

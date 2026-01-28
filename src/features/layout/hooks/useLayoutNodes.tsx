@@ -48,7 +48,7 @@ import type {
   TurnPlan,
   WorkspaceInfo,
 } from "../../../types";
-import type { WorkspaceHomeRun, WorkspaceRunMode } from "../../workspaces/hooks/useWorkspaceHome";
+import type { WorkspaceHomeRun, WorkspaceHomeRunInstance, WorkspaceRunMode } from "../../workspaces/hooks/useWorkspaceHome";
 import type { UpdateState } from "../../update/hooks/useUpdater";
 import type { TerminalSessionState } from "../../terminal/hooks/useTerminalSession";
 import type { TerminalTab } from "../../terminal/hooks/useTerminalTabs";
@@ -371,6 +371,8 @@ type LayoutNodesOptions = {
   // Workspace Home props
   showWorkspaceHome: boolean;
   workspaceRuns: WorkspaceHomeRun[];
+  recentThreadInstances: WorkspaceHomeRunInstance[];
+  recentThreadsUpdatedAt: number | null;
   workspacePrompt: string;
   setWorkspacePrompt: (value: string) => void;
   startWorkspaceRun: (images?: string[]) => Promise<boolean>;
@@ -382,6 +384,17 @@ type LayoutNodesOptions = {
   workspaceRunError: string | null;
   workspaceRunSubmitting: boolean;
   handleSelectWorkspaceInstance: (workspaceId: string, threadId: string) => void;
+  // CLAUDE.md editor props
+  claudeMdContent: string;
+  claudeMdExists: boolean;
+  claudeMdTruncated: boolean;
+  claudeMdIsLoading: boolean;
+  claudeMdIsSaving: boolean;
+  claudeMdError: string | null;
+  claudeMdIsDirty: boolean;
+  onClaudeMdContentChange: (value: string) => void;
+  onClaudeMdRefresh: () => void;
+  onClaudeMdSave: () => void;
 };
 
 type LayoutNodesResult = {
@@ -578,6 +591,8 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       <WorkspaceHome
         workspace={options.activeWorkspace}
         runs={options.workspaceRuns}
+        recentThreadInstances={options.recentThreadInstances}
+        recentThreadsUpdatedAt={options.recentThreadsUpdatedAt}
         prompt={options.workspacePrompt}
         onPromptChange={options.setWorkspacePrompt}
         onStartRun={options.startWorkspaceRun}
@@ -609,6 +624,16 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
         onDismissDictationHint={options.onDismissDictationHint}
         dictationTranscript={options.dictationTranscript}
         onDictationTranscriptHandled={options.onDictationTranscriptHandled}
+        claudeMdContent={options.claudeMdContent}
+        claudeMdExists={options.claudeMdExists}
+        claudeMdTruncated={options.claudeMdTruncated}
+        claudeMdIsLoading={options.claudeMdIsLoading}
+        claudeMdIsSaving={options.claudeMdIsSaving}
+        claudeMdError={options.claudeMdError}
+        claudeMdIsDirty={options.claudeMdIsDirty}
+        onClaudeMdContentChange={options.onClaudeMdContentChange}
+        onClaudeMdRefresh={options.onClaudeMdRefresh}
+        onClaudeMdSave={options.onClaudeMdSave}
       />
     ) : null;
 

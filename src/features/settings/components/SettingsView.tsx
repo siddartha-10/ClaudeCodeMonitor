@@ -12,6 +12,9 @@ import FileText from "lucide-react/dist/esm/icons/file-text";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2";
 import X from "lucide-react/dist/esm/icons/x";
 import FlaskConical from "lucide-react/dist/esm/icons/flask-conical";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
+import { useGlobalClaudeSettings } from "../hooks/useGlobalClaudeSettings";
+import { useGlobalClaudeMd } from "../hooks/useGlobalClaudeMd";
 import type {
   AppSettings,
   ClaudeDoctorResult,
@@ -244,6 +247,8 @@ export function SettingsView({
   });
   const dictationReady = dictationModelStatus?.state === "ready";
   const dictationProgress = dictationModelStatus?.progress ?? null;
+  const globalClaudeSettings = useGlobalClaudeSettings();
+  const globalClaudeMd = useGlobalClaudeMd();
   const selectedDictationModel = useMemo(() => {
     return (
       DICTATION_MODELS.find(
@@ -2169,6 +2174,112 @@ export function SettingsView({
                     {projects.length === 0 && (
                       <div className="settings-empty">No projects yet.</div>
                     )}
+                  </div>
+                </div>
+
+                <div className="settings-divider" />
+                <div className="settings-subsection-title">Global settings.json</div>
+                <div className="settings-subsection-subtitle">
+                  Edit the global Claude Code settings file.
+                </div>
+                <div className="settings-field">
+                  <div className="settings-field-row">
+                    <button
+                      type="button"
+                      className="ghost settings-button-compact"
+                      onClick={() => globalClaudeSettings.refresh()}
+                      disabled={globalClaudeSettings.isLoading}
+                    >
+                      <RefreshCw aria-hidden />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      className="primary settings-button-compact"
+                      onClick={() => globalClaudeSettings.save()}
+                      disabled={
+                        globalClaudeSettings.isSaving ||
+                        !globalClaudeSettings.isDirty
+                      }
+                    >
+                      {globalClaudeSettings.isSaving ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                  {globalClaudeSettings.error && (
+                    <div className="settings-error">
+                      {globalClaudeSettings.error}
+                    </div>
+                  )}
+                  {globalClaudeSettings.truncated && (
+                    <div className="settings-warning">
+                      File is too large. Content has been truncated.
+                    </div>
+                  )}
+                  <textarea
+                    className="settings-textarea settings-textarea--code"
+                    value={globalClaudeSettings.content}
+                    onChange={(event) =>
+                      globalClaudeSettings.setContent(event.target.value)
+                    }
+                    placeholder="Claude Code settings (JSON format)..."
+                    disabled={globalClaudeSettings.isLoading}
+                    spellCheck={false}
+                  />
+                  <div className="settings-help">
+                    Stored at ~/.claude/settings.json
+                  </div>
+                </div>
+
+                <div className="settings-divider" />
+                <div className="settings-subsection-title">Global CLAUDE.md</div>
+                <div className="settings-subsection-subtitle">
+                  Global instructions for Claude Code used across all projects.
+                </div>
+                <div className="settings-field">
+                  <div className="settings-field-row">
+                    <button
+                      type="button"
+                      className="ghost settings-button-compact"
+                      onClick={() => globalClaudeMd.refresh()}
+                      disabled={globalClaudeMd.isLoading}
+                    >
+                      <RefreshCw aria-hidden />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      className="primary settings-button-compact"
+                      onClick={() => globalClaudeMd.save()}
+                      disabled={
+                        globalClaudeMd.isSaving ||
+                        !globalClaudeMd.isDirty
+                      }
+                    >
+                      {globalClaudeMd.isSaving ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                  {globalClaudeMd.error && (
+                    <div className="settings-error">
+                      {globalClaudeMd.error}
+                    </div>
+                  )}
+                  {globalClaudeMd.truncated && (
+                    <div className="settings-warning">
+                      File is too large. Content has been truncated.
+                    </div>
+                  )}
+                  <textarea
+                    className="settings-textarea"
+                    value={globalClaudeMd.content}
+                    onChange={(event) =>
+                      globalClaudeMd.setContent(event.target.value)
+                    }
+                    placeholder="Add global instructions for Claude Code..."
+                    disabled={globalClaudeMd.isLoading}
+                    spellCheck={false}
+                  />
+                  <div className="settings-help">
+                    Stored at ~/.claude/CLAUDE.md
                   </div>
                 </div>
 
