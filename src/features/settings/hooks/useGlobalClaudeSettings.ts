@@ -1,83 +1,52 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  readGlobalClaudeSettings,
-  writeGlobalClaudeSettings,
-} from "../../../services/tauri";
+import { useCallback, useMemo } from "react";
+import { fileRead, fileWrite } from "../../../services/tauri";
+import { useFileEditor } from "../../shared/hooks/useFileEditor";
+
+// Use a constant key since global settings is not workspace-specific
+const GLOBAL_SETTINGS_KEY = "global-settings";
 
 export function useGlobalClaudeSettings() {
-  const [content, setContent] = useState("");
-  const [originalContent, setOriginalContent] = useState("");
-  const [exists, setExists] = useState(false);
-  const [truncated, setTruncated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const hasFetched = useRef(false);
-  const inFlight = useRef(false);
-
-  const isDirty = content !== originalContent;
-
-  const refresh = useCallback(async () => {
-    if (inFlight.current) {
-      return;
-    }
-    inFlight.current = true;
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await readGlobalClaudeSettings();
-      setExists(response.exists);
-      setContent(response.content);
-      setOriginalContent(response.content);
-      setTruncated(response.truncated);
-      hasFetched.current = true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      inFlight.current = false;
-      setIsLoading(false);
-    }
+  const read = useCallback(async () => {
+    return fileRead("global", "settings");
   }, []);
 
-  const save = useCallback(async () => {
-    if (isSaving) {
-      return;
-    }
+  const write = useCallback(async (content: string) => {
+    return fileWrite("global", "settings", content);
+  }, []);
 
-    setIsSaving(true);
-    setError(null);
+  const editor = useFileEditor({
+    key: GLOBAL_SETTINGS_KEY,
+    read,
+    write,
+    readErrorTitle: "Failed to read global settings",
+    writeErrorTitle: "Failed to save global settings",
+  });
 
-    try {
-      await writeGlobalClaudeSettings(content);
-      setOriginalContent(content);
-      setExists(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsSaving(false);
-    }
-  }, [content, isSaving]);
-
-  // Auto-load on mount
-  useEffect(() => {
-    if (hasFetched.current) {
-      return;
-    }
-    refresh();
-  }, [refresh]);
-
-  return {
-    content,
-    exists,
-    truncated,
-    isLoading,
-    isSaving,
-    error,
-    isDirty,
-    setContent,
-    refresh,
-    save,
-  };
+  // Memoize the return value to maintain stable reference
+  return useMemo(
+    () => ({
+      content: editor.content,
+      exists: editor.exists,
+      truncated: editor.truncated,
+      isLoading: editor.isLoading,
+      isSaving: editor.isSaving,
+      error: editor.error,
+      isDirty: editor.isDirty,
+      setContent: editor.setContent,
+      refresh: editor.refresh,
+      save: editor.save,
+    }),
+    [
+      editor.content,
+      editor.exists,
+      editor.truncated,
+      editor.isLoading,
+      editor.isSaving,
+      editor.error,
+      editor.isDirty,
+      editor.setContent,
+      editor.refresh,
+      editor.save,
+    ],
+  );
 }

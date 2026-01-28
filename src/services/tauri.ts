@@ -470,53 +470,6 @@ export async function readWorkspaceFile(
   });
 }
 
-export type ClaudeMdResponse = {
-  exists: boolean;
-  content: string;
-  truncated: boolean;
-};
-
-export async function readClaudeMd(
-  workspaceId: string,
-): Promise<ClaudeMdResponse> {
-  return invoke<ClaudeMdResponse>("read_claude_md", { workspaceId });
-}
-
-export async function writeClaudeMd(
-  workspaceId: string,
-  content: string,
-): Promise<void> {
-  return invoke("write_claude_md", { workspaceId, content });
-}
-
-export type GlobalClaudeSettingsResponse = {
-  exists: boolean;
-  content: string;
-  truncated: boolean;
-};
-
-export async function readGlobalClaudeSettings(): Promise<GlobalClaudeSettingsResponse> {
-  return invoke<GlobalClaudeSettingsResponse>("read_global_claude_settings");
-}
-
-export async function writeGlobalClaudeSettings(content: string): Promise<void> {
-  return invoke("write_global_claude_settings", { content });
-}
-
-export type GlobalClaudeMdResponse = {
-  exists: boolean;
-  content: string;
-  truncated: boolean;
-};
-
-export async function readGlobalClaudeMd(): Promise<GlobalClaudeMdResponse> {
-  return invoke<GlobalClaudeMdResponse>("read_global_claude_md");
-}
-
-export async function writeGlobalClaudeMd(content: string): Promise<void> {
-  return invoke("write_global_claude_md", { content });
-}
-
 export async function listGitBranches(workspaceId: string) {
   return invoke<any>("list_git_branches", { workspaceId });
 }
@@ -659,4 +612,40 @@ export async function getClaudeTasks(
   sessionId: string,
 ): Promise<ClaudeTasksResponse> {
   return invoke<ClaudeTasksResponse>("get_claude_tasks", { sessionId });
+}
+
+// File operations types
+export type FileScope = "workspace" | "global";
+export type FileKind = "claude_md" | "settings";
+
+export type FileReadResponse = {
+  exists: boolean;
+  content: string;
+  truncated: boolean;
+};
+
+export async function fileRead(
+  scope: FileScope,
+  kind: FileKind,
+  workspaceId?: string | null,
+): Promise<FileReadResponse> {
+  return invoke<FileReadResponse>("file_read", {
+    scope,
+    kind,
+    workspaceId: workspaceId ?? null,
+  });
+}
+
+export async function fileWrite(
+  scope: FileScope,
+  kind: FileKind,
+  content: string,
+  workspaceId?: string | null,
+): Promise<void> {
+  return invoke("file_write", {
+    scope,
+    kind,
+    content,
+    workspaceId: workspaceId ?? null,
+  });
 }

@@ -12,8 +12,8 @@ import FileText from "lucide-react/dist/esm/icons/file-text";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2";
 import X from "lucide-react/dist/esm/icons/x";
 import FlaskConical from "lucide-react/dist/esm/icons/flask-conical";
-import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import { useGlobalClaudeSettings } from "../hooks/useGlobalClaudeSettings";
+import { FileEditorCard } from "../../shared/components/FileEditorCard";
 import { useGlobalClaudeMd } from "../hooks/useGlobalClaudeMd";
 import type {
   AppSettings,
@@ -2182,106 +2182,72 @@ export function SettingsView({
                 <div className="settings-subsection-subtitle">
                   Edit the global Claude Code settings file.
                 </div>
-                <div className="settings-field">
-                  <div className="settings-field-row">
-                    <button
-                      type="button"
-                      className="ghost settings-button-compact"
-                      onClick={() => globalClaudeSettings.refresh()}
-                      disabled={globalClaudeSettings.isLoading}
-                    >
-                      <RefreshCw aria-hidden />
-                      Refresh
-                    </button>
-                    <button
-                      type="button"
-                      className="primary settings-button-compact"
-                      onClick={() => globalClaudeSettings.save()}
-                      disabled={
-                        globalClaudeSettings.isSaving ||
-                        !globalClaudeSettings.isDirty
-                      }
-                    >
-                      {globalClaudeSettings.isSaving ? "Saving..." : "Save"}
-                    </button>
+                {globalClaudeSettings.truncated && (
+                  <div className="settings-warning">
+                    File is too large. Content has been truncated.
                   </div>
-                  {globalClaudeSettings.error && (
-                    <div className="settings-error">
-                      {globalClaudeSettings.error}
-                    </div>
-                  )}
-                  {globalClaudeSettings.truncated && (
-                    <div className="settings-warning">
-                      File is too large. Content has been truncated.
-                    </div>
-                  )}
-                  <textarea
-                    className="settings-textarea settings-textarea--code"
-                    value={globalClaudeSettings.content}
-                    onChange={(event) =>
-                      globalClaudeSettings.setContent(event.target.value)
-                    }
-                    placeholder="Claude Code settings (JSON format)..."
-                    disabled={globalClaudeSettings.isLoading}
-                    spellCheck={false}
-                  />
-                  <div className="settings-help">
-                    Stored at ~/.claude/settings.json
-                  </div>
-                </div>
+                )}
+                <FileEditorCard
+                  title="settings.json"
+                  error={globalClaudeSettings.error}
+                  value={globalClaudeSettings.content}
+                  placeholder="Claude Code settings (JSON format)..."
+                  helpText="Stored at ~/.claude/settings.json"
+                  disabled={globalClaudeSettings.isLoading}
+                  refreshDisabled={globalClaudeSettings.isLoading}
+                  saveDisabled={globalClaudeSettings.isSaving || !globalClaudeSettings.isDirty}
+                  saveLabel={globalClaudeSettings.exists ? "Save" : "Create"}
+                  onChange={globalClaudeSettings.setContent}
+                  onRefresh={globalClaudeSettings.refresh}
+                  onSave={globalClaudeSettings.save}
+                  classNames={{
+                    container: "settings-file-editor",
+                    header: "settings-file-editor-header",
+                    title: "settings-file-editor-title",
+                    actions: "settings-file-editor-actions",
+                    meta: "settings-file-editor-meta",
+                    iconButton: "settings-file-editor-icon-button",
+                    error: "settings-file-editor-error",
+                    textarea: "settings-file-editor-textarea settings-file-editor-textarea--code",
+                    help: "settings-file-editor-help",
+                  }}
+                />
 
                 <div className="settings-divider" />
                 <div className="settings-subsection-title">Global CLAUDE.md</div>
                 <div className="settings-subsection-subtitle">
                   Global instructions for Claude Code used across all projects.
                 </div>
-                <div className="settings-field">
-                  <div className="settings-field-row">
-                    <button
-                      type="button"
-                      className="ghost settings-button-compact"
-                      onClick={() => globalClaudeMd.refresh()}
-                      disabled={globalClaudeMd.isLoading}
-                    >
-                      <RefreshCw aria-hidden />
-                      Refresh
-                    </button>
-                    <button
-                      type="button"
-                      className="primary settings-button-compact"
-                      onClick={() => globalClaudeMd.save()}
-                      disabled={
-                        globalClaudeMd.isSaving ||
-                        !globalClaudeMd.isDirty
-                      }
-                    >
-                      {globalClaudeMd.isSaving ? "Saving..." : "Save"}
-                    </button>
+                {globalClaudeMd.truncated && (
+                  <div className="settings-warning">
+                    File is too large. Content has been truncated.
                   </div>
-                  {globalClaudeMd.error && (
-                    <div className="settings-error">
-                      {globalClaudeMd.error}
-                    </div>
-                  )}
-                  {globalClaudeMd.truncated && (
-                    <div className="settings-warning">
-                      File is too large. Content has been truncated.
-                    </div>
-                  )}
-                  <textarea
-                    className="settings-textarea"
-                    value={globalClaudeMd.content}
-                    onChange={(event) =>
-                      globalClaudeMd.setContent(event.target.value)
-                    }
-                    placeholder="Add global instructions for Claude Code..."
-                    disabled={globalClaudeMd.isLoading}
-                    spellCheck={false}
-                  />
-                  <div className="settings-help">
-                    Stored at ~/.claude/CLAUDE.md
-                  </div>
-                </div>
+                )}
+                <FileEditorCard
+                  title="CLAUDE.md"
+                  error={globalClaudeMd.error}
+                  value={globalClaudeMd.content}
+                  placeholder="Add global instructions for Claude Code..."
+                  helpText="Stored at ~/.claude/CLAUDE.md"
+                  disabled={globalClaudeMd.isLoading}
+                  refreshDisabled={globalClaudeMd.isLoading}
+                  saveDisabled={globalClaudeMd.isSaving || !globalClaudeMd.isDirty}
+                  saveLabel={globalClaudeMd.exists ? "Save" : "Create"}
+                  onChange={globalClaudeMd.setContent}
+                  onRefresh={globalClaudeMd.refresh}
+                  onSave={globalClaudeMd.save}
+                  classNames={{
+                    container: "settings-file-editor",
+                    header: "settings-file-editor-header",
+                    title: "settings-file-editor-title",
+                    actions: "settings-file-editor-actions",
+                    meta: "settings-file-editor-meta",
+                    iconButton: "settings-file-editor-icon-button",
+                    error: "settings-file-editor-error",
+                    textarea: "settings-file-editor-textarea",
+                    help: "settings-file-editor-help",
+                  }}
+                />
 
               </section>
             )}

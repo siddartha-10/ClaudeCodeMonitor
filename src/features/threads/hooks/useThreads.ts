@@ -822,6 +822,13 @@ export function useThreads({
       ) => {
         dispatch({ type: "appendReasoningSummary", threadId, itemId, delta });
       },
+      onReasoningSummaryBoundary: (
+        _workspaceId: string,
+        threadId: string,
+        itemId: string,
+      ) => {
+        dispatch({ type: "appendReasoningSummaryBoundary", threadId, itemId });
+      },
       onReasoningTextDelta: (
         _workspaceId: string,
         threadId: string,
@@ -951,6 +958,20 @@ export function useThreads({
           ? `Turn failed: ${payload.message}`
           : "Turn failed.";
         pushThreadErrorMessage(threadId, message);
+        safeMessageActivity();
+      },
+      onContextCompacted: (
+        workspaceId: string,
+        threadId: string,
+        turnId: string,
+      ) => {
+        dispatch({ type: "ensureThread", workspaceId, threadId });
+        if (!turnId) {
+          return;
+        }
+        dispatch({ type: "appendContextCompacted", threadId, turnId });
+        const timestamp = Date.now();
+        recordThreadActivity(workspaceId, threadId, timestamp);
         safeMessageActivity();
       },
     }),

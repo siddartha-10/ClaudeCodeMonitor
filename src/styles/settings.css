@@ -638,6 +638,105 @@
   border: 1px solid rgba(245, 166, 35, 0.3);
 }
 
+/* FileEditorCard styles for settings */
+.settings-file-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.settings-file-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-file-editor-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.settings-file-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-file-editor-meta {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.settings-file-editor-icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.settings-file-editor-icon-button:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.settings-file-editor-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-file-editor-error {
+  font-size: 11px;
+  color: var(--status-error);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 120, 120, 0.1);
+  border: 1px solid rgba(255, 120, 120, 0.3);
+}
+
+.settings-file-editor-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-control);
+  color: var(--text-strong);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.settings-file-editor-textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+}
+
+.settings-file-editor-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-file-editor-textarea--code {
+  font-family: "SF Mono", "Fira Mono", "Menlo", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-file-editor-help {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
 .settings-toggle-row {
   display: flex;
   align-items: center;

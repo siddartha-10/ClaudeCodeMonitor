@@ -5,6 +5,10 @@ mod claude;
 mod claude_tasks;
 mod claude_home;
 mod claude_config;
+mod file_io;
+mod file_ops;
+mod file_policy;
+mod files;
 mod task_manager;
 #[cfg(not(target_os = "windows"))]
 #[path = "dictation.rs"]
@@ -77,10 +81,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             settings::get_app_settings,
             settings::update_app_settings,
-            settings::read_global_claude_settings,
-            settings::write_global_claude_settings,
-            settings::read_global_claude_md,
-            settings::write_global_claude_md,
             menu::menu_set_accelerators,
             claude::claude_doctor,
             workspaces::list_workspaces,
@@ -130,8 +130,6 @@ pub fn run() {
             git::get_github_pull_request_comments,
             workspaces::list_workspace_files,
             workspaces::read_workspace_file,
-            workspaces::read_claude_md,
-            workspaces::write_claude_md,
             workspaces::open_workspace_in,
             git::list_git_branches,
             git::checkout_git_branch,
@@ -167,7 +165,9 @@ pub fn run() {
             task_manager::task_list_read,
             task_manager::task_update,
             task_manager::task_delete,
-            task_manager::task_lists_available
+            task_manager::task_lists_available,
+            files::file_read,
+            files::file_write
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

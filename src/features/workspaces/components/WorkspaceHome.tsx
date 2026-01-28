@@ -29,9 +29,8 @@ import Laptop from "lucide-react/dist/esm/icons/laptop";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
-import Save from "lucide-react/dist/esm/icons/save";
 import { computeDictationInsertion } from "../../../utils/dictation";
+import { FileEditorCard } from "../../shared/components/FileEditorCard";
 import { getCaretPosition } from "../../../utils/caretPosition";
 
 type ThreadStatus = {
@@ -720,59 +719,41 @@ export function WorkspaceHome({
       </div>
 
       <div className="workspace-home-runs">
-        <div className="workspace-home-section-header">
-          <div className="workspace-home-section-title">
-            CLAUDE.md
-            {claudeMdIsDirty && <span className="workspace-home-dirty-indicator">*</span>}
-          </div>
-          <div className="workspace-home-section-actions">
-            <button
-              type="button"
-              className="ghost workspace-home-action-button"
-              onClick={onClaudeMdRefresh}
-              disabled={claudeMdIsLoading || claudeMdIsSaving}
-              title="Refresh"
-            >
-              <RefreshCw
-                size={14}
-                className={claudeMdIsLoading ? "workspace-home-spinner" : ""}
-              />
-            </button>
-            <button
-              type="button"
-              className="ghost workspace-home-action-button"
-              onClick={onClaudeMdSave}
-              disabled={claudeMdIsLoading || claudeMdIsSaving || !claudeMdIsDirty}
-              title="Save"
-            >
-              <Save size={14} />
-            </button>
-          </div>
-        </div>
-        {claudeMdError && (
-          <div className="workspace-home-error">{claudeMdError}</div>
-        )}
         {claudeMdTruncated && (
           <div className="workspace-home-warning">
             File was truncated due to size limits. Some content may not be shown.
           </div>
         )}
-        <div className="workspace-home-claude-md-editor">
-          <textarea
-            className="workspace-home-claude-md-textarea"
-            value={claudeMdContent}
-            onChange={(e) => onClaudeMdContentChange(e.target.value)}
-            disabled={claudeMdIsLoading || claudeMdIsSaving}
-            placeholder={
-              claudeMdIsLoading
-                ? "Loading..."
-                : claudeMdExists
-                  ? ""
-                  : "No CLAUDE.md file exists. Start typing to create one."
-            }
-            spellCheck={false}
-          />
-        </div>
+        <FileEditorCard
+          title={`CLAUDE.md${claudeMdIsDirty ? " *" : ""}`}
+          error={claudeMdError}
+          value={claudeMdContent}
+          placeholder={
+            claudeMdIsLoading
+              ? "Loading..."
+              : claudeMdExists
+                ? ""
+                : "No CLAUDE.md file exists. Start typing to create one."
+          }
+          disabled={claudeMdIsLoading || claudeMdIsSaving}
+          refreshDisabled={claudeMdIsLoading || claudeMdIsSaving}
+          saveDisabled={claudeMdIsLoading || claudeMdIsSaving || !claudeMdIsDirty}
+          saveLabel={claudeMdExists ? "Save" : "Create"}
+          onChange={onClaudeMdContentChange}
+          onRefresh={onClaudeMdRefresh}
+          onSave={onClaudeMdSave}
+          classNames={{
+            container: "workspace-home-file-editor",
+            header: "workspace-home-file-editor-header",
+            title: "workspace-home-file-editor-title",
+            actions: "workspace-home-file-editor-actions",
+            meta: "workspace-home-file-editor-meta",
+            iconButton: "workspace-home-file-editor-icon-button",
+            error: "workspace-home-file-editor-error",
+            textarea: "workspace-home-file-editor-textarea",
+            help: "workspace-home-file-editor-help",
+          }}
+        />
       </div>
     </div>
   );

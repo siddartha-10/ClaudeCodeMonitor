@@ -112,88 +112,11 @@ fn list_workspace_files_inner(root: &PathBuf, max_files: usize) -> Vec<String> {
 }
 
 const MAX_WORKSPACE_FILE_BYTES: u64 = 400_000;
-const CLAUDE_MD_FILENAME: &str = "CLAUDE.md";
-const MAX_CLAUDE_MD_BYTES: u64 = 100_000;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct WorkspaceFileResponse {
     content: String,
     truncated: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub(crate) struct ClaudeMdResponse {
-    pub exists: bool,
-    pub content: String,
-    pub truncated: bool,
-}
-
-fn read_claude_md_inner(root: &PathBuf) -> Result<ClaudeMdResponse, String> {
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|err| format!("Failed to resolve workspace root: {err}"))?;
-    let claude_md_path = canonical_root.join(CLAUDE_MD_FILENAME);
-
-    if !claude_md_path.exists() {
-        return Ok(ClaudeMdResponse {
-            exists: false,
-            content: String::new(),
-            truncated: false,
-        });
-    }
-
-    let canonical_path = claude_md_path
-        .canonicalize()
-        .map_err(|err| format!("Failed to resolve CLAUDE.md path: {err}"))?;
-    if !canonical_path.starts_with(&canonical_root) {
-        return Err("Invalid file path".to_string());
-    }
-
-    let metadata = std::fs::metadata(&canonical_path)
-        .map_err(|err| format!("Failed to read file metadata: {err}"))?;
-    if !metadata.is_file() {
-        return Err("Path is not a file".to_string());
-    }
-
-    let file = File::open(&canonical_path)
-        .map_err(|err| format!("Failed to open file: {err}"))?;
-    let mut buffer = Vec::new();
-    file.take(MAX_CLAUDE_MD_BYTES + 1)
-        .read_to_end(&mut buffer)
-        .map_err(|err| format!("Failed to read file: {err}"))?;
-
-    let truncated = buffer.len() > MAX_CLAUDE_MD_BYTES as usize;
-    if truncated {
-        buffer.truncate(MAX_CLAUDE_MD_BYTES as usize);
-    }
-
-    let content = String::from_utf8(buffer)
-        .map_err(|_| "File is not valid UTF-8".to_string())?;
-
-    Ok(ClaudeMdResponse {
-        exists: true,
-        content,
-        truncated,
-    })
-}
-
-fn write_claude_md_inner(root: &PathBuf, content: &str) -> Result<(), String> {
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|err| format!("Failed to resolve workspace root: {err}"))?;
-    let claude_md_path = canonical_root.join(CLAUDE_MD_FILENAME);
-
-    // Ensure the path is within the workspace root
-    if let Ok(canonical_path) = claude_md_path.canonicalize() {
-        if !canonical_path.starts_with(&canonical_root) {
-            return Err("Invalid file path".to_string());
-        }
-    }
-
-    std::fs::write(&claude_md_path, content)
-        .map_err(|err| format!("Failed to write CLAUDE.md: {err}"))?;
-
-    Ok(())
 }
 
 fn read_workspace_file_inner(
@@ -257,57 +180,6 @@ pub(crate) async fn read_workspace_file(
         .ok_or("workspace not found")?;
     let root = PathBuf::from(&entry.path);
     read_workspace_file_inner(&root, &path)
-}
-
-#[tauri::command]
-pub(crate) async fn read_claude_md(
-    workspace_id: String,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<ClaudeMdResponse, String> {
-    if remote_backend::is_remote_mode(&*state).await {
-        let response = remote_backend::call_remote(
-            &*state,
-            app,
-            "read_claude_md",
-            json!({ "workspaceId": workspace_id }),
-        )
-        .await?;
-        return serde_json::from_value(response).map_err(|err| err.to_string());
-    }
-
-    let workspaces = state.workspaces.lock().await;
-    let entry = workspaces
-        .get(&workspace_id)
-        .ok_or("workspace not found")?;
-    let root = PathBuf::from(&entry.path);
-    read_claude_md_inner(&root)
-}
-
-#[tauri::command]
-pub(crate) async fn write_claude_md(
-    workspace_id: String,
-    content: String,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<(), String> {
-    if remote_backend::is_remote_mode(&*state).await {
-        remote_backend::call_remote(
-            &*state,
-            app,
-            "write_claude_md",
-            json!({ "workspaceId": workspace_id, "content": content }),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let workspaces = state.workspaces.lock().await;
-    let entry = workspaces
-        .get(&workspace_id)
-        .ok_or("workspace not found")?;
-    let root = PathBuf::from(&entry.path);
-    write_claude_md_inner(&root, &content)
 }
 
 fn sort_workspaces(list: &mut Vec<WorkspaceInfo>) {

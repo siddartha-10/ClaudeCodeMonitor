@@ -1,92 +1,52 @@
-import { useCallback, useEffect, useState } from "react";
-import { readGlobalClaudeMd, writeGlobalClaudeMd } from "../../../services/tauri";
+import { useCallback, useMemo } from "react";
+import { fileRead, fileWrite } from "../../../services/tauri";
+import { useFileEditor } from "../../shared/hooks/useFileEditor";
 
-export type GlobalClaudeMdState = {
-  content: string;
-  exists: boolean;
-  truncated: boolean;
-  isLoading: boolean;
-  isSaving: boolean;
-  error: string | null;
-  isDirty: boolean;
-};
+// Use a constant key since global CLAUDE.md is not workspace-specific
+const GLOBAL_CLAUDE_MD_KEY = "global-claude-md";
 
 export function useGlobalClaudeMd() {
-  const [state, setState] = useState<GlobalClaudeMdState>({
-    content: "",
-    exists: false,
-    truncated: false,
-    isLoading: true,
-    isSaving: false,
-    error: null,
-    isDirty: false,
-  });
-
-  const [originalContent, setOriginalContent] = useState("");
-
-  const load = useCallback(async () => {
-    setState((prev) => ({ ...prev, isLoading: true, error: null }));
-    try {
-      const response = await readGlobalClaudeMd();
-      setState({
-        content: response.content,
-        exists: response.exists,
-        truncated: response.truncated,
-        isLoading: false,
-        isSaving: false,
-        error: null,
-        isDirty: false,
-      });
-      setOriginalContent(response.content);
-    } catch (err) {
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-    }
+  const read = useCallback(async () => {
+    return fileRead("global", "claude_md");
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const write = useCallback(async (content: string) => {
+    return fileWrite("global", "claude_md", content);
+  }, []);
 
-  const setContent = useCallback((content: string) => {
-    setState((prev) => ({
-      ...prev,
-      content,
-      isDirty: content !== originalContent,
-    }));
-  }, [originalContent]);
+  const editor = useFileEditor({
+    key: GLOBAL_CLAUDE_MD_KEY,
+    read,
+    write,
+    readErrorTitle: "Failed to read global CLAUDE.md",
+    writeErrorTitle: "Failed to save global CLAUDE.md",
+  });
 
-  const save = useCallback(async () => {
-    setState((prev) => ({ ...prev, isSaving: true, error: null }));
-    try {
-      await writeGlobalClaudeMd(state.content);
-      setOriginalContent(state.content);
-      setState((prev) => ({
-        ...prev,
-        exists: true,
-        isSaving: false,
-        isDirty: false,
-      }));
-    } catch (err) {
-      setState((prev) => ({
-        ...prev,
-        isSaving: false,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-    }
-  }, [state.content]);
-
-  const refresh = useCallback(async () => {
-    await load();
-  }, [load]);
-
-  return {
-    ...state,
-    setContent,
-    save,
-    refresh,
-  };
+  // Memoize the return value to maintain stable reference
+  return useMemo(
+    () => ({
+      content: editor.content,
+      exists: editor.exists,
+      truncated: editor.truncated,
+      isLoading: editor.isLoading,
+      isSaving: editor.isSaving,
+      error: editor.error,
+      isDirty: editor.isDirty,
+      setContent: editor.setContent,
+      refresh: editor.refresh,
+      save: editor.save,
+    }),
+    [
+      editor.content,
+      editor.exists,
+      editor.truncated,
+      editor.isLoading,
+      editor.isSaving,
+      editor.error,
+      editor.isDirty,
+      editor.setContent,
+      editor.refresh,
+      editor.save,
+    ],
+  );
 }
