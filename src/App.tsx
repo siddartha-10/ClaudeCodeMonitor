@@ -96,6 +96,7 @@ import type {
   ComposerEditorSettings,
   WorkspaceInfo,
 } from "./types";
+import { useCodeCssVars } from "./features/app/hooks/useCodeCssVars";
 
 const AboutView = lazy(() =>
   import("./features/about/components/AboutView").then((module) => ({
@@ -151,6 +152,7 @@ function MainApp() {
     handleCopyDebug,
     clearDebugEntries,
   } = useDebugLog();
+  useCodeCssVars(appSettings);
   useLiquidGlassEffect({ reduceTransparency, onDebug: addDebugEntry });
   const { globalRateLimits } = useGlobalRateLimits();
   const [accessMode, setAccessMode] = useState<AccessMode>("current");
@@ -583,6 +585,8 @@ function MainApp() {
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
+    startResume,
+    startStatus,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
@@ -923,8 +927,12 @@ function MainApp() {
     isReviewing,
     steerEnabled: appSettings.experimentalSteerEnabled,
     connectWorkspace,
+    startThreadForWorkspace,
     sendUserMessage,
+    sendUserMessageToThread,
     startReview,
+    startResume,
+    startStatus,
   });
 
   const handleInsertComposerText = useComposerInsert({
@@ -1377,6 +1385,11 @@ function MainApp() {
     activeThreadId,
     activeItems,
     activeRateLimits,
+    usageShowRemaining: appSettings.usageShowRemaining,
+    accountInfo: null,
+    onSwitchAccount: () => {},
+    onCancelSwitchAccount: () => {},
+    accountSwitching: false,
     codeBlockCopyUseModifier: appSettings.composerCodeBlockCopyUseModifier,
     permissionDenials,
     userInputRequests,

@@ -21,6 +21,7 @@ import { TerminalPanel } from "../../terminal/components/TerminalPanel";
 import type { ApprovalRuleInfo } from "../../../utils/approvalRules";
 import type {
   AccessMode,
+  AccountSnapshot,
   BranchInfo,
   ClaudeTask,
   CollaborationModeOption,
@@ -65,6 +66,11 @@ type GitDiffViewerItem = {
   path: string;
   status: string;
   diff: string;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 type WorktreeRenameState = {
@@ -106,6 +112,11 @@ type LayoutNodesOptions = {
   activeThreadId: string | null;
   activeItems: ConversationItem[];
   activeRateLimits: RateLimitSnapshot | null;
+  usageShowRemaining: boolean;
+  accountInfo: AccountSnapshot | null;
+  onSwitchAccount: () => void;
+  onCancelSwitchAccount: () => void;
+  accountSwitching: boolean;
   codeBlockCopyUseModifier: boolean;
   permissionDenials: PermissionDenial[];
   userInputRequests: RequestUserInputRequest[];
@@ -441,6 +452,11 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       activeWorkspaceId={options.activeWorkspaceId}
       activeThreadId={options.activeThreadId}
       accountRateLimits={options.activeRateLimits}
+      usageShowRemaining={options.usageShowRemaining}
+      accountInfo={options.accountInfo}
+      onSwitchAccount={options.onSwitchAccount}
+      onCancelSwitchAccount={options.onCancelSwitchAccount}
+      accountSwitching={options.accountSwitching}
       onOpenSettings={options.onOpenSettings}
       onOpenDebug={options.onOpenDebug}
       showDebugButton={options.showDebugButton}

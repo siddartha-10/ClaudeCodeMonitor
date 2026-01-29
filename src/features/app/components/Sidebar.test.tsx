@@ -50,6 +50,11 @@ const baseProps = {
   onWorkspaceDragEnter: vi.fn(),
   onWorkspaceDragLeave: vi.fn(),
   onWorkspaceDrop: vi.fn(),
+  usageShowRemaining: false,
+  accountInfo: null,
+  onSwitchAccount: vi.fn(),
+  onCancelSwitchAccount: vi.fn(),
+  accountSwitching: false,
 };
 
 describe("Sidebar", () => {

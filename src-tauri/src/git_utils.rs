@@ -88,6 +88,21 @@ pub(crate) fn diff_patch_to_string(patch: &mut git2::Patch) -> Result<String, gi
         .unwrap_or_else(|| String::from_utf8_lossy(&buf).to_string()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::image_mime_type;
+
+    #[test]
+    fn image_mime_type_detects_known_extensions() {
+        assert_eq!(image_mime_type("icon.PNG"), Some("image/png"));
+        assert_eq!(image_mime_type("photo.jpeg"), Some("image/jpeg"));
+        assert_eq!(image_mime_type("vector.SVG"), Some("image/svg+xml"));
+        assert_eq!(image_mime_type("glyph.ico"), Some("image/x-icon"));
+        assert_eq!(image_mime_type("readme.txt"), None);
+    }
+
+}
+
 pub(crate) fn parse_github_repo(remote_url: &str) -> Option<String> {
     let trimmed = remote_url.trim();
     if trimmed.is_empty() {

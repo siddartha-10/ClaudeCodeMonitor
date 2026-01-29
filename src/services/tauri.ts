@@ -360,6 +360,18 @@ export async function getGlobalRateLimits() {
   );
 }
 
+export async function getAccountInfo(workspaceId: string) {
+  return invoke<Record<string, unknown> | null>("account_read", { workspaceId });
+}
+
+export async function runClaudeLogin(workspaceId: string) {
+  return invoke<{ output: string }>("claude_login", { workspaceId });
+}
+
+export async function cancelClaudeLogin(workspaceId: string) {
+  return invoke<{ canceled: boolean }>("claude_login_cancel", { workspaceId });
+}
+
 export async function getSkillsList(workspaceId: string) {
   return invoke<any>("skills_list", { workspaceId });
 }

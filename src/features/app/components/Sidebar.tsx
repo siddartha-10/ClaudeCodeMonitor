@@ -1,4 +1,9 @@
-import type { RateLimitSnapshot, ThreadSummary, WorkspaceInfo } from "../../../types";
+import type {
+  AccountSnapshot,
+  RateLimitSnapshot,
+  ThreadSummary,
+  WorkspaceInfo,
+} from "../../../types";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -48,6 +53,11 @@ type SidebarProps = {
   activeWorkspaceId: string | null;
   activeThreadId: string | null;
   accountRateLimits: RateLimitSnapshot | null;
+  usageShowRemaining: boolean;
+  accountInfo: AccountSnapshot | null;
+  onSwitchAccount: () => void;
+  onCancelSwitchAccount: () => void;
+  accountSwitching: boolean;
   onOpenSettings: () => void;
   onOpenDebug: () => void;
   showDebugButton: boolean;
@@ -95,6 +105,11 @@ export function Sidebar({
   activeWorkspaceId,
   activeThreadId,
   accountRateLimits,
+  usageShowRemaining,
+  accountInfo,
+  onSwitchAccount,
+  onCancelSwitchAccount,
+  accountSwitching,
   onOpenSettings,
   onOpenDebug,
   showDebugButton,
@@ -165,8 +180,19 @@ export function Sidebar({
     creditsLabel,
     showWeekly,
     showSonnet,
-  } = getUsageLabels(accountRateLimits);
+  } = getUsageLabels(accountRateLimits, usageShowRemaining);
   const normalizedQuery = debouncedQuery.trim().toLowerCase();
+
+  const accountEmail = accountInfo?.email?.trim() ?? "";
+  const accountButtonLabel = accountEmail
+    ? accountEmail
+    : accountInfo?.type === "apikey"
+      ? "API key"
+      : "Sign in to Claude";
+  const accountActionLabel = accountEmail ? "Switch account" : "Sign in";
+  const showAccountSwitcher = Boolean(activeWorkspaceId);
+  const accountSwitchDisabled = accountSwitching || !activeWorkspaceId;
+  const accountCancelDisabled = !accountSwitching || !activeWorkspaceId;
 
   const isWorkspaceMatch = useCallback(
     (workspace: WorkspaceInfo) => {
@@ -621,6 +647,14 @@ export function Sidebar({
         onOpenSettings={onOpenSettings}
         onOpenDebug={onOpenDebug}
         showDebugButton={showDebugButton}
+        showAccountSwitcher={showAccountSwitcher}
+        accountLabel={accountButtonLabel}
+        accountActionLabel={accountActionLabel}
+        accountDisabled={accountSwitchDisabled}
+        accountSwitching={accountSwitching}
+        accountCancelDisabled={accountCancelDisabled}
+        onSwitchAccount={onSwitchAccount}
+        onCancelSwitchAccount={onCancelSwitchAccount}
       />
     </aside>
   );

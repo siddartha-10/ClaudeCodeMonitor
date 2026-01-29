@@ -19,14 +19,6 @@ export function SidebarHeader({
       <div className="sidebar-header-title">
         <div className="sidebar-title-group">
           <button
-            className="subtitle subtitle-button sidebar-title-button"
-            onClick={onSelectHome}
-            data-tauri-drag-region="false"
-            aria-label="Open home"
-          >
-            Projects
-          </button>
-          <button
             className="sidebar-title-add"
             onClick={onAddWorkspace}
             data-tauri-drag-region="false"
@@ -34,6 +26,14 @@ export function SidebarHeader({
             type="button"
           >
             <FolderPlus aria-hidden />
+          </button>
+          <button
+            className="subtitle subtitle-button sidebar-title-button"
+            onClick={onSelectHome}
+            data-tauri-drag-region="false"
+            aria-label="Open home"
+          >
+            Projects
           </button>
         </div>
       </div>

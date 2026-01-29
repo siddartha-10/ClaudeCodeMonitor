@@ -6,6 +6,13 @@ import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up";
 import Mic from "lucide-react/dist/esm/icons/mic";
 import Square from "lucide-react/dist/esm/icons/square";
+import Brain from "lucide-react/dist/esm/icons/brain";
+import PlusCircle from "lucide-react/dist/esm/icons/plus-circle";
+import Info from "lucide-react/dist/esm/icons/info";
+import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw";
+import ScrollText from "lucide-react/dist/esm/icons/scroll-text";
+import Wrench from "lucide-react/dist/esm/icons/wrench";
+import FileText from "lucide-react/dist/esm/icons/file-text";
 import { useComposerImageDrop } from "../hooks/useComposerImageDrop";
 import { ComposerAttachments } from "./ComposerAttachments";
 import { DictationWaveform } from "../../dictation/components/DictationWaveform";
@@ -89,6 +96,27 @@ export function ComposerInput({
   const maxTextareaHeight = isExpanded ? 320 : 120;
   const isFileSuggestion = (item: AutocompleteItem) =>
     item.label.includes("/") || item.label.includes("\\");
+  const suggestionIcon = (item: AutocompleteItem) => {
+    if (isFileSuggestion(item)) {
+      return FileText;
+    }
+    if (item.id === "review" || item.id.startsWith("review-")) {
+      return Brain;
+    }
+    if (item.id === "new") {
+      return PlusCircle;
+    }
+    if (item.id === "resume") {
+      return RotateCcw;
+    }
+    if (item.id === "status") {
+      return Info;
+    }
+    if (item.id.startsWith("prompt:")) {
+      return ScrollText;
+    }
+    return Wrench;
+  };
   const fileTitle = (path: string) => {
     const normalized = path.replace(/\\/g, "/");
     const parts = normalized.split("/").filter(Boolean);
@@ -295,30 +323,32 @@ export function ComposerInput({
                 onClick={() => onSelectSuggestion(item)}
                 onMouseEnter={() => onHighlightIndex(index)}
               >
-                {isFileSuggestion(item) ? (
-                  <>
-                    <span className="composer-suggestion-title">
-                      {fileTitle(item.label)}
-                    </span>
-                    <span className="composer-suggestion-description">
-                      {item.label}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="composer-suggestion-title">{item.label}</span>
-                    {item.description && (
-                      <span className="composer-suggestion-description">
-                        {item.description}
+                {(() => {
+                  const Icon = suggestionIcon(item);
+                  const fileSuggestion = isFileSuggestion(item);
+                  const title = fileSuggestion ? fileTitle(item.label) : item.label;
+                  const description = fileSuggestion ? item.label : item.description;
+                  return (
+                    <span className="composer-suggestion-row">
+                      <span className="composer-suggestion-icon" aria-hidden>
+                        <Icon size={14} />
                       </span>
-                    )}
-                    {item.hint && (
-                      <span className="composer-suggestion-description">
-                        {item.hint}
+                      <span className="composer-suggestion-content">
+                        <span className="composer-suggestion-title">{title}</span>
+                        {description && (
+                          <span className="composer-suggestion-description">
+                            {description}
+                          </span>
+                        )}
+                        {!fileSuggestion && item.hint && (
+                          <span className="composer-suggestion-description">
+                            {item.hint}
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </>
-                )}
+                    </span>
+                  );
+                })()}
               </button>
             ))}
           </div>

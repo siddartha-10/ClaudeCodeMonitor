@@ -26,19 +26,6 @@ type UseComposerAutocompleteStateArgs = {
 const MAX_FILE_SUGGESTIONS = 500;
 const FILE_TRIGGER_PREFIX = new RegExp("^(?:\\s|[\"'`]|\\(|\\[|\\{)$");
 
-function textIncludesFile(text: string, path: string) {
-  if (!text || !path) {
-    return false;
-  }
-  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(
-    "(^|\\s|[\"'`]|\\(|\\[|\\{|@)" +
-      escaped +
-      "(?=$|\\s|[\"'`]|\\)|\\]|\\}|\\.|,|:|;|!|\\?)",
-  );
-  return pattern.test(text);
-}
-
 function isFileTriggerActive(text: string, cursor: number | null) {
   if (!text || cursor === null) {
     return false;
@@ -103,12 +90,9 @@ export function useComposerAutocompleteState({
       isFileTriggerActive(text, selectionStart)
         ? (() => {
             const query = getFileTriggerQuery(text, selectionStart) ?? "";
-            const candidates = files.filter(
-              (path) => !textIncludesFile(text, path),
-            );
             const limited = query
-              ? candidates
-              : candidates.slice(0, MAX_FILE_SUGGESTIONS);
+              ? files
+              : files.slice(0, MAX_FILE_SUGGESTIONS);
             return limited.map((path) => ({
               id: path,
               label: path,
@@ -137,14 +121,38 @@ export function useComposerAutocompleteState({
     [prompts],
   );
 
-  const reviewItems = useMemo<AutocompleteItem[]>(
-    () => [
+  const slashCommandItems = useMemo<AutocompleteItem[]>(() => {
+    const commands: AutocompleteItem[] = [
+      {
+        id: "new",
+        label: "new",
+        description: "start a new chat",
+        insertText: "new",
+      },
+      {
+        id: "resume",
+        label: "resume",
+        description: "refresh the active thread",
+        insertText: "resume",
+      },
       {
         id: "review",
         label: "review",
-        description: "review uncommitted changes",
+        description: "start a code review",
         insertText: "review",
       },
+      {
+        id: "status",
+        label: "status",
+        description: "show session status",
+        insertText: "status",
+      },
+    ];
+    return commands.sort((a, b) => a.label.localeCompare(b.label));
+  }, []);
+
+  const reviewItems = useMemo<AutocompleteItem[]>(
+    () => [
       {
         id: "review-base",
         label: "review base main",
@@ -168,8 +176,8 @@ export function useComposerAutocompleteState({
   );
 
   const slashItems = useMemo<AutocompleteItem[]>(
-    () => [...reviewItems, ...promptItems],
-    [promptItems, reviewItems],
+    () => [...slashCommandItems, ...reviewItems, ...promptItems],
+    [promptItems, reviewItems, slashCommandItems],
   );
 
   const triggers = useMemo(
