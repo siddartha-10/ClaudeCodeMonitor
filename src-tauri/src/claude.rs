@@ -3012,6 +3012,7 @@ fn fork_session_from_message(
     }
 
     writer.flush().map_err(|err| err.to_string())?;
+    drop(writer); // Close file handle before potential delete (required on Windows)
 
     if !found {
         let _ = fs::remove_file(&new_path);

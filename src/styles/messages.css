@@ -224,6 +224,14 @@
   transform: translateY(0);
 }
 
+.message:focus-within .message-copy-button,
+.message-copy-button:focus-visible,
+.message:focus-within .message-menu-button,
+.message-menu-button:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .message-copy-icon {
   position: relative;
   width: 14px;
