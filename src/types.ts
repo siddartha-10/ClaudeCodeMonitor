@@ -48,10 +48,17 @@ export type ConversationItem =
       role: "user" | "assistant";
       text: string;
       model?: string | null;
+      images?: string[];
     }
   | { id: string; kind: "reasoning"; summary: string; content: string }
   | { id: string; kind: "diff"; title: string; diff: string; status?: string }
   | { id: string; kind: "review"; state: "started" | "completed"; text: string }
+  | {
+      id: string;
+      kind: "explore";
+      status: "exploring" | "explored";
+      entries: { kind: "read" | "search" | "list" | "run"; label: string; detail?: string }[];
+    }
   | {
       id: string;
       kind: "tool";
@@ -79,7 +86,7 @@ export type ReviewTarget =
 
 export type AccessMode = "read-only" | "current" | "full-access";
 export type BackendMode = "local" | "remote";
-export type ThemePreference = "system" | "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark" | "dim";
 
 
 export type ComposerEditorPreset = "default" | "helpful" | "smart";
@@ -119,6 +126,7 @@ export type AppSettings = {
   lastComposerReasoningEffort: string | null;
   uiScale: number;
   theme: ThemePreference;
+  usageShowRemaining: boolean;
   uiFontFamily: string;
   codeFontFamily: string;
   codeFontSize: number;
@@ -168,6 +176,7 @@ export type RequestUserInputQuestion = {
   id: string;
   header: string;
   question: string;
+  isOther?: boolean;
   options?: RequestUserInputOption[];
 };
 
@@ -203,12 +212,24 @@ export type GitFileStatus = {
 export type GitFileDiff = {
   path: string;
   diff: string;
+  isBinary?: boolean;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 export type GitCommitDiff = {
   path: string;
   status: string;
   diff: string;
+  isBinary?: boolean;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 export type GitLogEntry = {
@@ -372,6 +393,13 @@ export type RateLimitSnapshot = {
   sonnet: RateLimitWindow | null;
   credits: CreditsSnapshot | null;
   planType: string | null;
+};
+
+export type AccountSnapshot = {
+  type: "chatgpt" | "apikey" | "unknown";
+  email: string | null;
+  planType: string | null;
+  requiresOpenaiAuth: boolean | null;
 };
 
 export type QueuedMessage = {

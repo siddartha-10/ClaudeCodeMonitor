@@ -10,7 +10,7 @@ import {
   normalizeFontFamily,
 } from "../../../utils/fonts";
 
-const allowedThemes = new Set(["system", "light", "dark"]);
+const allowedThemes = new Set(["system", "light", "dark", "dim"]);
 
 const defaultSettings: AppSettings = {
   claudeBin: null,
@@ -36,6 +36,7 @@ const defaultSettings: AppSettings = {
   lastComposerReasoningEffort: null,
   uiScale: UI_SCALE_DEFAULT,
   theme: "system",
+  usageShowRemaining: false,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
   codeFontFamily: DEFAULT_CODE_FONT_FAMILY,
   codeFontSize: CODE_FONT_SIZE_DEFAULT,

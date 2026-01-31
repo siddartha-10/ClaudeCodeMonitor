@@ -48,6 +48,8 @@ describe("useAppServerEvents", () => {
       onAppServerEvent: vi.fn(),
       onWorkspaceConnected: vi.fn(),
       onAgentMessageDelta: vi.fn(),
+      onReasoningSummaryBoundary: vi.fn(),
+      onContextCompacted: vi.fn(),
       onRequestUserInput: vi.fn(),
       onItemCompleted: vi.fn(),
       onAgentMessageCompleted: vi.fn(),
@@ -76,6 +78,36 @@ describe("useAppServerEvents", () => {
       itemId: "item-1",
       delta: "Hello",
     });
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-1",
+        message: {
+          method: "item/reasoning/summaryPartAdded",
+          params: { threadId: "thread-1", itemId: "reasoning-1", summaryIndex: 1 },
+        },
+      });
+    });
+    expect(handlers.onReasoningSummaryBoundary).toHaveBeenCalledWith(
+      "ws-1",
+      "thread-1",
+      "reasoning-1",
+    );
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-1",
+        message: {
+          method: "thread/compacted",
+          params: { threadId: "thread-1", turnId: "turn-7" },
+        },
+      });
+    });
+    expect(handlers.onContextCompacted).toHaveBeenCalledWith(
+      "ws-1",
+      "thread-1",
+      "turn-7",
+    );
 
     act(() => {
       listener?.({
@@ -115,6 +147,7 @@ describe("useAppServerEvents", () => {
             id: "confirm_path",
             header: "Confirm",
             question: "Proceed?",
+            isOther: false,
             options: [
               { label: "Yes", description: "Continue." },
               { label: "No", description: "Stop." },
@@ -209,6 +242,7 @@ describe("useAppServerEvents", () => {
             id: "q-1",
             header: "",
             question: "Choose",
+            isOther: false,
             options: [
               { label: "Yes", description: "" },
               { label: "", description: "No label" },

@@ -11,11 +11,19 @@ type FilePreviewPopoverProps = {
   truncated: boolean;
   previewKind?: "text" | "image";
   imageSrc?: string | null;
+  openTargets?: { id: string; label: string }[];
+  openAppIconById?: Record<string, string>;
+  selectedOpenAppId?: string;
+  onSelectOpenAppId?: (id: string) => void;
   selection: { start: number; end: number } | null;
   onSelectLine: (index: number, event: MouseEvent<HTMLButtonElement>) => void;
+  onLineMouseDown?: (index: number, event: MouseEvent<HTMLButtonElement>) => void;
+  onLineMouseEnter?: (index: number, event: MouseEvent<HTMLButtonElement>) => void;
+  onLineMouseUp?: (index: number, event: MouseEvent<HTMLButtonElement>) => void;
   onClearSelection: () => void;
   onAddSelection: () => void;
   onClose: () => void;
+  selectionHints?: string[];
   style?: CSSProperties;
   isLoading?: boolean;
   error?: string | null;
@@ -28,11 +36,19 @@ export function FilePreviewPopover({
   truncated,
   previewKind = "text",
   imageSrc = null,
+  openTargets: _openTargets,
+  openAppIconById: _openAppIconById,
+  selectedOpenAppId: _selectedOpenAppId,
+  onSelectOpenAppId: _onSelectOpenAppId,
   selection,
   onSelectLine,
+  onLineMouseDown,
+  onLineMouseEnter,
+  onLineMouseUp,
   onClearSelection,
   onAddSelection,
   onClose,
+  selectionHints = [],
   style,
   isLoading = false,
   error = null,
@@ -103,7 +119,18 @@ export function FilePreviewPopover({
       ) : (
         <div className="file-preview-body">
           <div className="file-preview-toolbar">
-            <span className="file-preview-selection">{selectionLabel}</span>
+            <div className="file-preview-selection-group">
+              <span className="file-preview-selection">{selectionLabel}</span>
+              {selectionHints.length > 0 ? (
+                <div className="file-preview-hints" aria-label="Selection hints">
+                  {selectionHints.map((hint) => (
+                    <span key={hint} className="file-preview-hint">
+                      {hint}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <div className="file-preview-actions">
               <OpenAppMenu path={absolutePath} />
               <button
@@ -141,6 +168,9 @@ export function FilePreviewPopover({
                     isSelected ? " is-selected" : ""
                   }${isStart ? " is-start" : ""}${isEnd ? " is-end" : ""}`}
                   onClick={(event) => onSelectLine(index, event)}
+                  onMouseDown={(event) => onLineMouseDown?.(index, event)}
+                  onMouseEnter={(event) => onLineMouseEnter?.(index, event)}
+                  onMouseUp={(event) => onLineMouseUp?.(index, event)}
                 >
                   <span className="file-preview-line-number">{index + 1}</span>
                   <span

@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import Brain from "lucide-react/dist/esm/icons/brain";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
@@ -12,6 +14,7 @@ import Search from "lucide-react/dist/esm/icons/search";
 import Terminal from "lucide-react/dist/esm/icons/terminal";
 import Users from "lucide-react/dist/esm/icons/users";
 import Wrench from "lucide-react/dist/esm/icons/wrench";
+import X from "lucide-react/dist/esm/icons/x";
 import type {
   ConversationItem,
   RequestUserInputRequest,
@@ -77,6 +80,7 @@ type WorkingIndicatorProps = {
   processingStartedAt?: number | null;
   lastDurationMs?: number | null;
   hasItems: boolean;
+  reasoningLabel?: string | null;
 };
 
 type MessageRowProps = {
@@ -119,11 +123,20 @@ type ToolRowProps = {
   onRequestAutoScroll?: () => void;
 };
 
+type ExploreRowProps = {
+  item: Extract<ConversationItem, { kind: "explore" }>;
+};
+
 type CommandOutputProps = {
   output: string;
 };
 
-type ToolGroupItem = Extract<ConversationItem, { kind: "tool" | "reasoning" }>;
+type MessageImage = {
+  src: string;
+  label: string;
+};
+
+type ToolGroupItem = Extract<ConversationItem, { kind: "tool" | "reasoning" | "explore" }>;
 
 type ToolGroup = {
   id: string;
@@ -212,8 +225,223 @@ function formatCount(value: number, singular: string, plural: string) {
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
+function sanitizeReasoningTitle(title: string) {
+  return title
+    .replace(/[`*_~]/g, "")
+    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+    .trim();
+}
+
+function parseReasoning(item: Extract<ConversationItem, { kind: "reasoning" }>) {
+  const summary = item.summary ?? "";
+  const content = item.content ?? "";
+  const hasSummary = summary.trim().length > 0;
+  const titleSource = hasSummary ? summary : content;
+  const titleLines = titleSource.split("\n");
+  const trimmedLines = titleLines.map((line) => line.trim());
+  const titleLineIndex = trimmedLines.findIndex(Boolean);
+  const rawTitle = titleLineIndex >= 0 ? trimmedLines[titleLineIndex] : "";
+  const cleanTitle = sanitizeReasoningTitle(rawTitle);
+  const summaryTitle = cleanTitle || "Reasoning";
+  const summaryLines = summary.split("\n");
+  const contentLines = content.split("\n");
+  const summaryBody =
+    hasSummary && titleLineIndex >= 0
+      ? summaryLines
+          .filter((_, index) => index !== titleLineIndex)
+          .join("\n")
+          .trim()
+      : "";
+  const contentBody = hasSummary
+    ? content.trim()
+    : titleLineIndex >= 0
+      ? contentLines
+          .filter((_, index) => index !== titleLineIndex)
+          .join("\n")
+          .trim()
+      : content.trim();
+  const bodyParts = [summaryBody, contentBody].filter(Boolean);
+  const bodyText = bodyParts.join("\n\n").trim();
+  const hasBody = bodyText.length > 0;
+  const hasAnyText = titleSource.trim().length > 0;
+  const workingLabel = hasAnyText ? summaryTitle : null;
+  return {
+    summaryTitle,
+    bodyText,
+    hasBody,
+    workingLabel,
+  };
+}
+
+function reasoningWorkingLabel(items: ConversationItem[]) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "message") {
+      break;
+    }
+    if (item.kind !== "reasoning") {
+      continue;
+    }
+    const parsed = parseReasoning(item);
+    if (parsed.workingLabel) {
+      return parsed.workingLabel;
+    }
+  }
+  return null;
+}
+
+function normalizeMessageImageSrc(path: string) {
+  if (!path) {
+    return "";
+  }
+  if (path.startsWith("data:") || path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  if (path.startsWith("file://")) {
+    return path;
+  }
+  try {
+    return convertFileSrc(path);
+  } catch {
+    return "";
+  }
+}
+
+const MessageImageGrid = memo(function MessageImageGrid({
+  images,
+  onOpen,
+  hasText,
+}: {
+  images: MessageImage[];
+  onOpen: (index: number) => void;
+  hasText: boolean;
+}) {
+  return (
+    <div
+      className={`message-image-grid${hasText ? " message-image-grid--with-text" : ""}`}
+      role="list"
+    >
+      {images.map((image, index) => (
+        <button
+          key={`${image.src}-${index}`}
+          type="button"
+          className="message-image-thumb"
+          onClick={() => onOpen(index)}
+          aria-label={`Open image ${index + 1}`}
+        >
+          <img src={image.src} alt={image.label} loading="lazy" />
+        </button>
+      ))}
+    </div>
+  );
+});
+
+const ImageLightbox = memo(function ImageLightbox({
+  images,
+  activeIndex,
+  onClose,
+}: {
+  images: MessageImage[];
+  activeIndex: number;
+  onClose: () => void;
+}) {
+  const activeImage = images[activeIndex];
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  if (!activeImage) {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="message-image-lightbox"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="message-image-lightbox-content"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="message-image-lightbox-close"
+          onClick={onClose}
+          aria-label="Close image preview"
+        >
+          <X size={16} aria-hidden />
+        </button>
+        <img src={activeImage.src} alt={activeImage.label} />
+      </div>
+    </div>,
+    document.body,
+  );
+});
+
 function isToolGroupItem(item: ConversationItem): item is ToolGroupItem {
-  return item.kind === "tool" || item.kind === "reasoning";
+  return item.kind === "tool" || item.kind === "reasoning" || item.kind === "explore";
+}
+
+function mergeExploreItems(
+  items: Extract<ConversationItem, { kind: "explore" }>[],
+): Extract<ConversationItem, { kind: "explore" }> {
+  const first = items[0];
+  const last = items[items.length - 1];
+  const status = last?.status ?? "explored";
+  const entries = items.flatMap((item) => item.entries);
+  return {
+    id: first.id,
+    kind: "explore",
+    status,
+    entries,
+  };
+}
+
+function mergeConsecutiveExploreRuns(items: ToolGroupItem[]): ToolGroupItem[] {
+  const result: ToolGroupItem[] = [];
+  let run: Extract<ConversationItem, { kind: "explore" }>[] = [];
+
+  const flushRun = () => {
+    if (run.length === 0) {
+      return;
+    }
+    if (run.length === 1) {
+      result.push(run[0]);
+    } else {
+      result.push(mergeExploreItems(run));
+    }
+    run = [];
+  };
+
+  items.forEach((item) => {
+    if (item.kind === "explore") {
+      run.push(item);
+      return;
+    }
+    flushRun();
+    result.push(item);
+  });
+  flushRun();
+  return result;
 }
 
 function buildToolGroups(items: ConversationItem[]): MessageListEntry[] {
@@ -224,16 +452,28 @@ function buildToolGroups(items: ConversationItem[]): MessageListEntry[] {
     if (buffer.length === 0) {
       return;
     }
-    const toolCount = buffer.filter((item) => item.kind === "tool").length;
-    const messageCount = buffer.length - toolCount;
-    if (toolCount === 0 || buffer.length === 1) {
-      buffer.forEach((item) => entries.push({ kind: "item", item }));
+    const normalizedBuffer = mergeConsecutiveExploreRuns(buffer);
+
+    const toolCount = normalizedBuffer.reduce((total, item) => {
+      if (item.kind === "tool") {
+        return total + 1;
+      }
+      if (item.kind === "explore") {
+        return total + item.entries.length;
+      }
+      return total;
+    }, 0);
+    const messageCount = normalizedBuffer.filter(
+      (item) => item.kind !== "tool" && item.kind !== "explore",
+    ).length;
+    if (toolCount === 0 || normalizedBuffer.length === 1) {
+      normalizedBuffer.forEach((item) => entries.push({ kind: "item", item }));
     } else {
       entries.push({
         kind: "toolGroup",
         group: {
-          id: buffer[0].id,
-          items: buffer,
+          id: normalizedBuffer[0].id,
+          items: normalizedBuffer,
           toolCount,
           messageCount,
         },
@@ -561,6 +801,8 @@ function scrollKeyForItems(items: ConversationItem[]) {
       return `${last.id}-${last.text.length}`;
     case "reasoning":
       return `${last.id}-${last.summary.length}-${last.content.length}`;
+    case "explore":
+      return `${last.id}-${last.status}-${last.entries.length}`;
     case "tool":
       return `${last.id}-${last.status ?? ""}-${last.output?.length ?? 0}`;
     case "diff":
@@ -579,6 +821,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
   processingStartedAt = null,
   lastDurationMs = null,
   hasItems,
+  reasoningLabel = null,
 }: WorkingIndicatorProps) {
   const [elapsedMs, setElapsedMs] = useState(0);
 
@@ -602,7 +845,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
           <div className="working-timer">
             <span className="working-timer-clock">{formatDurationMs(elapsedMs)}</span>
           </div>
-          <span className="working-text">Working…</span>
+          <span className="working-text">{reasoningLabel || "Working…"}</span>
         </div>
       )}
       {!isThinking && lastDurationMs !== null && hasItems && (
@@ -627,6 +870,22 @@ const MessageRow = memo(function MessageRow({
   onOpenFileLinkMenu,
   onShowMenu,
 }: MessageRowProps) {
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const hasText = item.text.trim().length > 0;
+  const imageItems = useMemo(() => {
+    if (!item.images || item.images.length === 0) {
+      return [];
+    }
+    return item.images
+      .map((image, index) => {
+        const src = normalizeMessageImageSrc(image);
+        if (!src) {
+          return null;
+        }
+        return { src, label: `Image ${index + 1}` };
+      })
+      .filter(Boolean) as MessageImage[];
+  }, [item.images]);
   const modelLabel = item.model ? formatModelLabel(item.model) : "";
   return (
     <div className={`message ${item.role}`}>
@@ -639,14 +898,30 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
         <div className="bubble message-bubble">
-          <Markdown
-            value={item.text}
-            className="markdown"
-            codeBlockStyle="message"
-            codeBlockCopyUseModifier={codeBlockCopyUseModifier}
-            onOpenFileLink={onOpenFileLink}
-            onOpenFileLinkMenu={onOpenFileLinkMenu}
-          />
+          {imageItems.length > 0 && (
+            <MessageImageGrid
+              images={imageItems}
+              onOpen={setLightboxIndex}
+              hasText={hasText}
+            />
+          )}
+          {hasText && (
+            <Markdown
+              value={item.text}
+              className="markdown"
+              codeBlockStyle="message"
+              codeBlockCopyUseModifier={codeBlockCopyUseModifier}
+              onOpenFileLink={onOpenFileLink}
+              onOpenFileLinkMenu={onOpenFileLinkMenu}
+            />
+          )}
+          {lightboxIndex !== null && imageItems.length > 0 && (
+            <ImageLightbox
+              images={imageItems}
+              activeIndex={lightboxIndex}
+              onClose={() => setLightboxIndex(null)}
+            />
+          )}
           {onShowMenu && (
             <button
               type="button"
@@ -683,26 +958,8 @@ const ReasoningRow = memo(function ReasoningRow({
   onOpenFileLink,
   onOpenFileLinkMenu,
 }: ReasoningRowProps) {
-  const summaryText = item.summary || item.content;
-  const summaryLines = summaryText.split("\n");
-  const trimmedLines = summaryLines.map((line) => line.trim());
-  const titleLineIndex = trimmedLines.findIndex(Boolean);
-  const rawTitle =
-    titleLineIndex >= 0 ? trimmedLines[titleLineIndex] : "Reasoning";
-  const cleanTitle = rawTitle
-    .replace(/[`*_~]/g, "")
-    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
-    .trim();
-  const summaryTitle = cleanTitle || "Reasoning";
-  const reasoningTone: StatusTone = summaryText ? "completed" : "processing";
-  const bodyText =
-    titleLineIndex >= 0
-      ? summaryLines
-          .filter((_, index) => index !== titleLineIndex)
-          .join("\n")
-          .trim()
-      : "";
-  const showReasoningBody = Boolean(bodyText);
+  const { summaryTitle, bodyText, hasBody } = parseReasoning(item);
+  const reasoningTone: StatusTone = hasBody ? "completed" : "processing";
   return (
     <div className="tool-inline reasoning-inline">
       <button
@@ -726,7 +983,7 @@ const ReasoningRow = memo(function ReasoningRow({
           />
           <span className="tool-inline-value">{summaryTitle}</span>
         </button>
-        {showReasoningBody && (
+        {hasBody && (
           <Markdown
             value={bodyText}
             className={`reasoning-inline-detail markdown ${
@@ -1041,6 +1298,42 @@ const CommandOutput = memo(function CommandOutput({ output }: CommandOutputProps
   );
 });
 
+function exploreKindLabel(kind: ExploreRowProps["item"]["entries"][number]["kind"]) {
+  return kind[0].toUpperCase() + kind.slice(1);
+}
+
+const ExploreRow = memo(function ExploreRow({ item }: ExploreRowProps) {
+  const title = item.status === "exploring" ? "Exploring" : "Explored";
+  return (
+    <div className="tool-inline explore-inline">
+      <div className="tool-inline-bar-toggle" aria-hidden />
+      <div className="tool-inline-content">
+        <div className="explore-inline-header">
+          <Terminal
+            className={`tool-inline-icon ${
+              item.status === "exploring" ? "processing" : "completed"
+            }`}
+            size={14}
+            aria-hidden
+          />
+          <span className="explore-inline-title">{title}</span>
+        </div>
+        <div className="explore-inline-list">
+          {item.entries.map((entry, index) => (
+            <div key={`${entry.kind}-${entry.label}-${index}`} className="explore-inline-item">
+              <span className="explore-inline-kind">{exploreKindLabel(entry.kind)}</span>
+              <span className="explore-inline-label">{entry.label}</span>
+              {entry.detail && entry.detail !== entry.label && (
+                <span className="explore-inline-detail">{entry.detail}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export const Messages = memo(function Messages({
   items,
   threadId,
@@ -1131,7 +1424,18 @@ export const Messages = memo(function Messages({
     });
   }, []);
 
-  const visibleItems = items;
+  const latestReasoningLabel = useMemo(() => reasoningWorkingLabel(items), [items]);
+
+  const visibleItems = useMemo(
+    () =>
+      items.filter((item) => {
+        if (item.kind !== "reasoning") {
+          return true;
+        }
+        return parseReasoning(item).hasBody;
+      }),
+    [items],
+  );
 
   useEffect(() => {
     return () => {
@@ -1299,6 +1603,9 @@ export const Messages = memo(function Messages({
         />
       );
     }
+    if (item.kind === "explore") {
+      return <ExploreRow key={item.id} item={item} />;
+    }
     return null;
   };
 
@@ -1357,6 +1664,7 @@ export const Messages = memo(function Messages({
         processingStartedAt={processingStartedAt}
         lastDurationMs={lastDurationMs}
         hasItems={items.length > 0}
+        reasoningLabel={latestReasoningLabel}
       />
       {!items.length && !userInputNode && (
         <div className="empty messages-empty">

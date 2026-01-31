@@ -24,7 +24,7 @@ use crate::storage::write_workspaces;
 use crate::types::{
     WorkspaceEntry, WorkspaceInfo, WorkspaceKind, WorkspaceSettings, WorktreeInfo,
 };
-use crate::utils::normalize_git_path;
+use crate::utils::{git_env_path, normalize_git_path, resolve_git_binary};
 
 fn should_skip_dir(name: &str) -> bool {
     matches!(
@@ -208,9 +208,11 @@ fn apply_workspace_settings_update(
 }
 
 async fn run_git_command(repo_path: &PathBuf, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -237,9 +239,11 @@ fn is_missing_worktree_error(error: &str) -> bool {
 }
 
 async fn run_git_command_bytes(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -262,9 +266,11 @@ async fn run_git_command_bytes(repo_path: &PathBuf, args: &[&str]) -> Result<Vec
 }
 
 async fn run_git_diff(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args(args)
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -287,9 +293,11 @@ async fn run_git_diff(repo_path: &PathBuf, args: &[&str]) -> Result<Vec<u8>, Str
 }
 
 async fn git_branch_exists(repo_path: &PathBuf, branch: &str) -> Result<bool, String> {
-    let status = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let status = Command::new(git_bin)
         .args(["show-ref", "--verify", &format!("refs/heads/{branch}")])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .status()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -297,9 +305,11 @@ async fn git_branch_exists(repo_path: &PathBuf, branch: &str) -> Result<bool, St
 }
 
 async fn git_remote_exists(repo_path: &PathBuf, remote: &str) -> Result<bool, String> {
-    let status = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let status = Command::new(git_bin)
         .args(["remote", "get-url", remote])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .status()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -311,7 +321,8 @@ async fn git_remote_branch_exists(
     remote: &str,
     branch: &str,
 ) -> Result<bool, String> {
-    let output = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = Command::new(git_bin)
         .args([
             "ls-remote",
             "--heads",
@@ -319,6 +330,7 @@ async fn git_remote_branch_exists(
             &format!("refs/heads/{branch}"),
         ])
         .current_dir(repo_path)
+        .env("PATH", git_env_path())
         .output()
         .await
         .map_err(|e| format!("Failed to run git: {e}"))?;
@@ -1299,9 +1311,11 @@ pub(crate) async fn apply_worktree_changes(
         return Err("No changes to apply.".to_string());
     }
 
-    let mut child = Command::new("git")
+    let git_bin = resolve_git_binary().map_err(|e| format!("Failed to run git: {e}"))?;
+    let mut child = Command::new(git_bin)
         .args(["apply", "--3way", "--whitespace=nowarn", "-"])
         .current_dir(&parent_root)
+        .env("PATH", git_env_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

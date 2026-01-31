@@ -22,6 +22,9 @@ use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAud
 const DEFAULT_MODEL_ID: &str = "base";
 const MAX_CAPTURE_SECONDS: u32 = 120;
 
+#[cfg(target_os = "macos")]
+static MIC_PERMISSION_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 /// Checks microphone authorization status on macOS.
 #[cfg(target_os = "macos")]
 fn check_microphone_authorization() -> Result<AVAuthorizationStatus, String> {
@@ -30,61 +33,83 @@ fn check_microphone_authorization() -> Result<AVAuthorizationStatus, String> {
     Ok(status)
 }
 
-/// Triggers the microphone permission request dialog on macOS.
-/// This must be called from a thread (not across await points) due to RcBlock not being Send.
+/// Requests microphone permission on macOS.
+/// Returns Ok(true) if permission was granted, Ok(false) if denied,
+/// or Err with a message if the request failed.
 #[cfg(target_os = "macos")]
-fn trigger_microphone_permission_request() -> Result<(), String> {
+async fn request_microphone_permission(app: &AppHandle) -> Result<bool, String> {
+    let status = check_microphone_authorization()?;
+
+    match status {
+        AVAuthorizationStatus::Authorized => Ok(true),
+        AVAuthorizationStatus::Denied | AVAuthorizationStatus::Restricted => {
+            // Some macOS versions report Denied before the first prompt; try once per process.
+            if MIC_PERMISSION_REQUESTED.swap(true, Ordering::SeqCst) {
+                return Ok(false);
+            }
+            request_microphone_permission_with_completion(app).await
+        }
+        AVAuthorizationStatus::NotDetermined | _ => {
+            MIC_PERMISSION_REQUESTED.store(true, Ordering::SeqCst);
+            request_microphone_permission_with_completion(app).await
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn trigger_microphone_permission_request(
+    tx: oneshot::Sender<Result<bool, String>>,
+) {
     use block2::RcBlock;
     use objc2::runtime::Bool;
 
-    let media_type = unsafe { AVMediaTypeAudio.ok_or("Failed to get audio media type")? };
+    let media_type = match unsafe { AVMediaTypeAudio } {
+        Some(media_type) => media_type,
+        None => {
+            let _ = tx.send(Err("Failed to get audio media type".to_string()));
+            return;
+        }
+    };
 
-    let block = RcBlock::new(|_granted: Bool| {
-        // Completion handler - we poll the status separately
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    let tx_clone = Arc::clone(&tx);
+    let block = RcBlock::new(move |granted: Bool| {
+        if let Ok(mut guard) = tx_clone.lock() {
+            if let Some(sender) = guard.take() {
+                let _ = sender.send(Ok(granted.as_bool()));
+            }
+        }
     });
 
     unsafe {
         AVCaptureDevice::requestAccessForMediaType_completionHandler(media_type, &block);
     }
-
-    Ok(())
 }
 
-/// Requests microphone permission on macOS.
-/// Returns Ok(true) if permission was granted, Ok(false) if denied,
-/// or Err with a message if the request failed.
 #[cfg(target_os = "macos")]
-async fn request_microphone_permission() -> Result<bool, String> {
-    let status = check_microphone_authorization()?;
+async fn request_microphone_permission_with_completion(
+    app: &AppHandle,
+) -> Result<bool, String> {
+    // Trigger the permission request (this shows the system dialog)
+    // Ensure we do this on the main thread so the system dialog appears.
+    let (tx, rx) = oneshot::channel();
+    let app_handle = app.clone();
+    app_handle
+        .run_on_main_thread(move || {
+            trigger_microphone_permission_request(tx);
+        })
+        .map_err(|error| error.to_string())?;
 
-    match status {
-        AVAuthorizationStatus::Authorized => Ok(true),
-        AVAuthorizationStatus::Denied | AVAuthorizationStatus::Restricted => Ok(false),
-        AVAuthorizationStatus::NotDetermined | _ => {
-            // Trigger the permission request (this shows the system dialog)
-            // We do this in a sync context to avoid RcBlock Send issues
-            trigger_microphone_permission_request()?;
-
-            // Poll the authorization status until it changes from NotDetermined
-            let mut attempts = 0;
-            loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let new_status = check_microphone_authorization()?;
-                if new_status != AVAuthorizationStatus::NotDetermined {
-                    return Ok(new_status == AVAuthorizationStatus::Authorized);
-                }
-                attempts += 1;
-                if attempts > 600 {
-                    // 60 seconds timeout
-                    return Err("Microphone permission request timed out.".to_string());
-                }
-            }
-        }
+    match tokio::time::timeout(Duration::from_secs(60), rx).await {
+        Ok(Ok(Ok(granted))) => Ok(granted),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(_)) => Err("Failed to request microphone permission.".to_string()),
+        Err(_) => Err("Microphone permission request timed out.".to_string()),
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn request_microphone_permission() -> Result<bool, String> {
+async fn request_microphone_permission(_app: &AppHandle) -> Result<bool, String> {
     // On non-macOS platforms, assume permission is granted
     // (Linux doesn't have the same permission model)
     Ok(true)
@@ -750,7 +775,7 @@ pub(crate) async fn dictation_start(
     }
 
     // Request microphone permission before attempting to capture audio
-    match request_microphone_permission().await {
+    match request_microphone_permission(&app).await {
         Ok(true) => {
             // Permission granted, continue
         }
@@ -819,6 +844,11 @@ pub(crate) async fn dictation_start(
     );
 
     Ok(DictationSessionState::Listening)
+}
+
+#[tauri::command]
+pub(crate) async fn dictation_request_permission(app: AppHandle) -> Result<bool, String> {
+    request_microphone_permission(&app).await
 }
 
 #[tauri::command]

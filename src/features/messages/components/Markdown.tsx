@@ -39,6 +39,10 @@ type PreProps = {
   copyUseModifier: boolean;
 };
 
+type LinkBlockProps = {
+  urls: string[];
+};
+
 function extractLanguageTag(className?: string) {
   if (!className) {
     return null;
@@ -62,6 +66,53 @@ function extractCodeFromPre(node?: PreProps["node"]) {
     className: normalizedClassName,
     value: value.replace(/\n$/, ""),
   };
+}
+
+function normalizeUrlLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const withoutBullet = trimmed.replace(/^(?:[-*]|\d+\.)\s+/, "");
+  if (!/^https?:\/\/\S+$/i.test(withoutBullet)) {
+    return null;
+  }
+  return withoutBullet;
+}
+
+function extractUrlLines(value: string) {
+  const lines = value.split(/\r?\n/);
+  const urls = lines
+    .map((line) => normalizeUrlLine(line))
+    .filter((line): line is string => Boolean(line));
+  const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+  if (nonEmptyLines.length === 0) {
+    return null;
+  }
+  if (urls.length !== nonEmptyLines.length) {
+    return null;
+  }
+  return urls;
+}
+
+function LinkBlock({ urls }: LinkBlockProps) {
+  return (
+    <div className="markdown-linkblock">
+      {urls.map((url, index) => (
+        <a
+          key={`${url}-${index}`}
+          href={url}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void openUrl(url);
+          }}
+        >
+          {url}
+        </a>
+      ))}
+    </div>
+  );
 }
 
 function CodeBlock({ className, value, copyUseModifier }: CodeBlockProps) {
@@ -121,6 +172,18 @@ function PreBlock({ node, children, copyUseModifier }: PreProps) {
   const { className, value } = extractCodeFromPre(node);
   if (!className && !value && children) {
     return <pre>{children}</pre>;
+  }
+  const urlLines = extractUrlLines(value);
+  if (urlLines) {
+    return <LinkBlock urls={urlLines} />;
+  }
+  const isSingleLine = !value.includes("\n");
+  if (isSingleLine) {
+    return (
+      <pre className="markdown-codeblock-single">
+        <code className={className}>{value}</code>
+      </pre>
+    );
   }
   return (
     <CodeBlock

@@ -43,6 +43,7 @@ import {
 import { expandCustomPromptText } from "../../../utils/customPrompts";
 import { initialState, threadReducer } from "./useThreadsReducer";
 import { useThreadUserInput } from "./useThreadUserInput";
+import { useThreadAccountInfo } from "./useThreadAccountInfo";
 
 const STORAGE_KEY_THREAD_ACTIVITY = "claude-code-monitor.threadLastUserActivity";
 const STORAGE_KEY_PINNED_THREADS = "claude-code-monitor.pinnedThreads";
@@ -377,6 +378,14 @@ export function useThreads({
   const approvalAllowlistRef = useRef<Record<string, string[][]>>({});
   const lastPromptByThreadRef = useRef<Record<string, LastPrompt>>({});
 
+  const activeWorkspaceId = activeWorkspace?.id ?? null;
+  const { refreshAccountInfo } = useThreadAccountInfo({
+    activeWorkspaceId,
+    activeWorkspaceConnected: activeWorkspace?.connected,
+    dispatch,
+    onDebug,
+  });
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -475,7 +484,6 @@ export function useThreads({
     [],
   );
 
-  const activeWorkspaceId = activeWorkspace?.id ?? null;
   const activeThreadId = useMemo(() => {
     if (!activeWorkspaceId) {
       return null;
@@ -795,7 +803,6 @@ export function useThreads({
           text,
           timestamp,
         });
-        markProcessing(threadId, false);
         recordThreadActivity(workspaceId, threadId, timestamp);
         safeMessageActivity();
         if (threadId !== activeThreadId) {
@@ -823,6 +830,13 @@ export function useThreads({
         delta: string,
       ) => {
         dispatch({ type: "appendReasoningSummary", threadId, itemId, delta });
+      },
+      onReasoningSummaryBoundary: (
+        _workspaceId: string,
+        threadId: string,
+        itemId: string,
+      ) => {
+        dispatch({ type: "appendReasoningSummaryBoundary", threadId, itemId });
       },
       onReasoningTextDelta: (
         _workspaceId: string,
@@ -955,6 +969,20 @@ export function useThreads({
         pushThreadErrorMessage(threadId, message);
         safeMessageActivity();
       },
+      onContextCompacted: (
+        workspaceId: string,
+        threadId: string,
+        turnId: string,
+      ) => {
+        dispatch({ type: "ensureThread", workspaceId, threadId });
+        if (!turnId) {
+          return;
+        }
+        dispatch({ type: "appendContextCompacted", threadId, turnId });
+        const timestamp = Date.now();
+        recordThreadActivity(workspaceId, threadId, timestamp);
+        safeMessageActivity();
+      },
     }),
     [
       activeThreadId,
@@ -1043,6 +1071,17 @@ export function useThreads({
         return null;
       }
       if (!force && loadedThreads.current[threadId]) {
+        return threadId;
+      }
+      const threadStatus = state.threadStatusById[threadId];
+      if (threadStatus?.isProcessing && loadedThreads.current[threadId] && !force) {
+        onDebug?.({
+          id: `${Date.now()}-client-thread-resume-skipped`,
+          timestamp: Date.now(),
+          source: "client",
+          label: "thread/resume skipped",
+          payload: { workspaceId, threadId, reason: "active-turn" },
+        });
         return threadId;
       }
       onDebug?.({
@@ -1134,7 +1173,7 @@ export function useThreads({
         return null;
       }
     },
-    [applyCollabThreadLinksFromThread, getCustomName, onDebug, state.itemsByThread],
+    [applyCollabThreadLinksFromThread, getCustomName, onDebug, state.itemsByThread, state.threadStatusById],
   );
 
   const refreshThread = useCallback(
@@ -1165,18 +1204,26 @@ export function useThreads({
   );
 
   const listThreadsForWorkspace = useCallback(
-    async (workspace: WorkspaceInfo) => {
+    async (
+      workspace: WorkspaceInfo,
+      options?: {
+        preserveState?: boolean;
+      },
+    ) => {
+      const preserveState = options?.preserveState ?? false;
       const workspacePath = normalizeRootPath(workspace.path);
-      dispatch({
-        type: "setThreadListLoading",
-        workspaceId: workspace.id,
-        isLoading: true,
-      });
-      dispatch({
-        type: "setThreadListCursor",
-        workspaceId: workspace.id,
-        cursor: null,
-      });
+      if (!preserveState) {
+        dispatch({
+          type: "setThreadListLoading",
+          workspaceId: workspace.id,
+          isLoading: true,
+        });
+        dispatch({
+          type: "setThreadListCursor",
+          workspaceId: workspace.id,
+          cursor: null,
+        });
+      }
       onDebug?.({
         id: `${Date.now()}-client-thread-list`,
         timestamp: Date.now(),
@@ -1385,11 +1432,13 @@ export function useThreads({
           payload: error instanceof Error ? error.message : String(error),
         });
       } finally {
-        dispatch({
-          type: "setThreadListLoading",
-          workspaceId: workspace.id,
-          isLoading: false,
-        });
+        if (!preserveState) {
+          dispatch({
+            type: "setThreadListLoading",
+            workspaceId: workspace.id,
+            isLoading: false,
+          });
+        }
       }
     },
     [applyParentLinksFromThreads, getCustomName, onDebug],
@@ -1607,8 +1656,8 @@ export function useThreads({
         steerEnabled;
       let didInsertOptimistic = false;
       if (wasProcessing) {
-        const optimisticText = finalText || (images.length > 0 ? "[image]" : "");
-        if (optimisticText) {
+        const optimisticText = finalText;
+        if (optimisticText || images.length > 0) {
           dispatch({
             type: "upsertItem",
             threadId,
@@ -1619,6 +1668,7 @@ export function useThreads({
               kind: "message",
               role: "user",
               text: optimisticText,
+              images: images.length > 0 ? images : undefined,
             },
           });
           didInsertOptimistic = true;
@@ -1976,6 +2026,71 @@ export function useThreads({
     ],
   );
 
+  const startStatus = useCallback(
+    async (_text: string) => {
+      if (!activeWorkspace) {
+        return;
+      }
+      const threadId = await ensureThreadForActiveWorkspace();
+      if (!threadId) {
+        return;
+      }
+
+      const lines = [
+        "Session status:",
+        `- Model: ${model ?? "default"}`,
+        `- Reasoning effort: ${effort ?? "default"}`,
+        `- Access: ${accessMode ?? "current"}`,
+        `- Collaboration: ${collaborationMode ? "enabled" : "off"}`,
+      ];
+
+      const timestamp = Date.now();
+      recordThreadActivity(activeWorkspace.id, threadId, timestamp);
+      dispatch({
+        type: "addAssistantMessage",
+        threadId,
+        text: lines.join("\n"),
+      });
+      safeMessageActivity();
+    },
+    [
+      accessMode,
+      activeWorkspace,
+      collaborationMode,
+      dispatch,
+      effort,
+      ensureThreadForActiveWorkspace,
+      model,
+      recordThreadActivity,
+      safeMessageActivity,
+    ],
+  );
+
+  const startResume = useCallback(
+    async (_text: string) => {
+      if (!activeWorkspace) {
+        return;
+      }
+      if (activeThreadId && state.threadStatusById[activeThreadId]?.isProcessing) {
+        return;
+      }
+      const threadId = activeThreadId ?? (await ensureThreadForActiveWorkspace());
+      if (!threadId) {
+        return;
+      }
+      await refreshThread(activeWorkspace.id, threadId);
+      safeMessageActivity();
+    },
+    [
+      activeThreadId,
+      activeWorkspace,
+      ensureThreadForActiveWorkspace,
+      refreshThread,
+      safeMessageActivity,
+      state.threadStatusById,
+    ],
+  );
+
   const handlePermissionRemember = useCallback(
     async (denial: PermissionDenial, ruleInfo: ApprovalRuleInfo) => {
       try {
@@ -2018,7 +2133,7 @@ export function useThreads({
             reason: "select",
           },
         });
-        void resumeThreadForWorkspace(targetId, threadId, true);
+        void resumeThreadForWorkspace(targetId, threadId);
       }
     },
     [activeWorkspaceId, resumeThreadForWorkspace],
@@ -2197,6 +2312,7 @@ export function useThreads({
     threadListCursorByWorkspace: state.threadListCursorByWorkspace,
     activeTurnIdByThread: state.activeTurnIdByThread,
     tokenUsageByThread: state.tokenUsageByThread,
+    accountByWorkspace: state.accountByWorkspace,
     planByThread: state.planByThread,
     lastAgentMessageByThread: state.lastAgentMessageByThread,
     interruptTurn,
@@ -2218,9 +2334,12 @@ export function useThreads({
     sendUserMessage,
     sendUserMessageToThread,
     startReview,
+    startResume,
+    startStatus,
     handlePermissionRemember,
     handlePermissionRetry,
     handlePermissionDismiss,
     handleUserInputSubmit,
+    refreshAccountInfo,
   };
 }

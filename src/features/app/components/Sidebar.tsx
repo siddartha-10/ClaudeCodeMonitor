@@ -1,8 +1,14 @@
-import type { RateLimitSnapshot, ThreadSummary, WorkspaceInfo } from "../../../types";
+import type {
+  AccountSnapshot,
+  RateLimitSnapshot,
+  ThreadSummary,
+  WorkspaceInfo,
+} from "../../../types";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { FolderOpen, Search, X } from "lucide-react";
+import { FolderOpen, Search } from "lucide-react";
+import X from "lucide-react/dist/esm/icons/x";
 import { searchThread as searchThreadService } from "../../../services/tauri";
 import { SidebarCornerActions } from "./SidebarCornerActions";
 import { SidebarFooter } from "./SidebarFooter";
@@ -48,6 +54,11 @@ type SidebarProps = {
   activeWorkspaceId: string | null;
   activeThreadId: string | null;
   accountRateLimits: RateLimitSnapshot | null;
+  usageShowRemaining: boolean;
+  accountInfo: AccountSnapshot | null;
+  onSwitchAccount: () => void;
+  onCancelSwitchAccount: () => void;
+  accountSwitching: boolean;
   onOpenSettings: () => void;
   onOpenDebug: () => void;
   showDebugButton: boolean;
@@ -61,6 +72,7 @@ type SidebarProps = {
   onToggleWorkspaceCollapse: (workspaceId: string, collapsed: boolean) => void;
   onSelectThread: (workspaceId: string, threadId: string) => void;
   onDeleteThread: (workspaceId: string, threadId: string) => void;
+  onSyncThread: (workspaceId: string, threadId: string) => void;
   pinThread: (workspaceId: string, threadId: string) => boolean;
   unpinThread: (workspaceId: string, threadId: string) => void;
   isThreadPinned: (workspaceId: string, threadId: string) => boolean;
@@ -94,6 +106,11 @@ export function Sidebar({
   activeWorkspaceId,
   activeThreadId,
   accountRateLimits,
+  usageShowRemaining,
+  accountInfo,
+  onSwitchAccount,
+  onCancelSwitchAccount,
+  accountSwitching,
   onOpenSettings,
   onOpenDebug,
   showDebugButton,
@@ -107,6 +124,7 @@ export function Sidebar({
   onToggleWorkspaceCollapse,
   onSelectThread,
   onDeleteThread,
+  onSyncThread,
   pinThread,
   unpinThread,
   isThreadPinned,
@@ -127,6 +145,9 @@ export function Sidebar({
   const [expandedWorkspaces, setExpandedWorkspaces] = useState(
     new Set<string>(),
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [addMenuAnchor, setAddMenuAnchor] = useState<{
     workspaceId: string;
     top: number;
@@ -135,7 +156,6 @@ export function Sidebar({
   } | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
     Array<{ workspaceId: string; thread: ThreadSummary }> | null
   >(null);
@@ -213,16 +233,11 @@ export function Sidebar({
   const { collapsedGroups, toggleGroupCollapse } = useCollapsedGroups(
     COLLAPSED_GROUPS_STORAGE_KEY,
   );
-  const scrollFadeDeps = useMemo(
-    () => [groupedWorkspaces, threadsByWorkspace, expandedWorkspaces],
-    [groupedWorkspaces, threadsByWorkspace, expandedWorkspaces],
-  );
-  const { sidebarBodyRef, scrollFade, updateScrollFade } =
-    useSidebarScrollFade(scrollFadeDeps);
   const { getThreadRows } = useThreadRows(threadParentById);
   const { showThreadMenu, showWorkspaceMenu, showWorktreeMenu } =
     useSidebarMenus({
       onDeleteThread,
+      onSyncThread,
       onPinThread: pinThread,
       onUnpinThread: unpinThread,
       isThreadPinned,
@@ -241,7 +256,61 @@ export function Sidebar({
     creditsLabel,
     showWeekly,
     showSonnet,
-  } = getUsageLabels(accountRateLimits);
+  } = getUsageLabels(accountRateLimits, usageShowRemaining);
+  const normalizedQuery = debouncedQuery.trim().toLowerCase();
+
+  const accountEmail = accountInfo?.email?.trim() ?? "";
+  const accountButtonLabel = accountEmail
+    ? accountEmail
+    : accountInfo?.type === "apikey"
+      ? "API key"
+      : "Sign in to Claude";
+  const accountActionLabel = accountEmail ? "Switch account" : "Sign in";
+  const showAccountSwitcher = Boolean(activeWorkspaceId);
+  const accountSwitchDisabled = accountSwitching || !activeWorkspaceId;
+  const accountCancelDisabled = !accountSwitching || !activeWorkspaceId;
+
+  const isWorkspaceMatch = useCallback(
+    (workspace: WorkspaceInfo) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+      return workspace.name.toLowerCase().includes(normalizedQuery);
+    },
+    [normalizedQuery],
+  );
+
+  const renderHighlightedName = useCallback(
+    (name: string) => {
+      if (!normalizedQuery) {
+        return name;
+      }
+      const lower = name.toLowerCase();
+      const parts: React.ReactNode[] = [];
+      let cursor = 0;
+      let matchIndex = lower.indexOf(normalizedQuery, cursor);
+
+      while (matchIndex !== -1) {
+        if (matchIndex > cursor) {
+          parts.push(name.slice(cursor, matchIndex));
+        }
+        parts.push(
+          <span key={`${matchIndex}-${cursor}`} className="workspace-name-match">
+            {name.slice(matchIndex, matchIndex + normalizedQuery.length)}
+          </span>,
+        );
+        cursor = matchIndex + normalizedQuery.length;
+        matchIndex = lower.indexOf(normalizedQuery, cursor);
+      }
+
+      if (cursor < name.length) {
+        parts.push(name.slice(cursor));
+      }
+
+      return parts.length ? parts : name;
+    },
+    [normalizedQuery],
+  );
 
   const pinnedThreadRows = (() => {
     type ThreadRow = { thread: ThreadSummary; depth: number };
@@ -252,6 +321,9 @@ export function Sidebar({
     }> = [];
 
     workspaces.forEach((workspace) => {
+      if (!isWorkspaceMatch(workspace)) {
+        return;
+      }
       const threads = threadsByWorkspace[workspace.id] ?? [];
       if (!threads.length) {
         return;
@@ -302,6 +374,26 @@ export function Sidebar({
         })),
       );
   })();
+
+  const scrollFadeDeps = useMemo(
+    () => [groupedWorkspaces, threadsByWorkspace, expandedWorkspaces, normalizedQuery],
+    [groupedWorkspaces, threadsByWorkspace, expandedWorkspaces, normalizedQuery],
+  );
+  const { sidebarBodyRef, scrollFade, updateScrollFade } =
+    useSidebarScrollFade(scrollFadeDeps);
+
+  const filteredGroupedWorkspaces = useMemo(
+    () =>
+      groupedWorkspaces
+        .map((group) => ({
+          ...group,
+          workspaces: group.workspaces.filter(isWorkspaceMatch),
+        }))
+        .filter((group) => group.workspaces.length > 0),
+    [groupedWorkspaces, isWorkspaceMatch],
+  );
+
+  const isSearchActive = Boolean(normalizedQuery);
 
   const worktreesByParent = useMemo(() => {
     const worktrees = new Map<string, WorkspaceInfo[]>();
@@ -359,16 +451,34 @@ export function Sidebar({
     };
   }, [addMenuAnchor]);
 
+  useEffect(() => {
+    if (!isSearchOpen && searchQuery) {
+      setSearchQuery("");
+    }
+  }, [isSearchOpen, searchQuery]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [searchQuery]);
+
   return (
     <aside
-      className="sidebar"
+      className={`sidebar${isSearchOpen ? " search-open" : ""}`}
       ref={workspaceDropTargetRef}
       onDragOver={onWorkspaceDragOver}
       onDragEnter={onWorkspaceDragEnter}
       onDragLeave={onWorkspaceDragLeave}
       onDrop={onWorkspaceDrop}
     >
-      <SidebarHeader onSelectHome={onSelectHome} onAddWorkspace={onAddWorkspace} />
+      <SidebarHeader
+        onSelectHome={onSelectHome}
+        onAddWorkspace={onAddWorkspace}
+        onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+        isSearchOpen={isSearchOpen}
+      />
       <div className="sidebar-search" data-tauri-drag-region="false">
         <Search className="sidebar-search-icon" aria-hidden />
         <input
@@ -394,7 +504,7 @@ export function Sidebar({
             }}
             aria-label="Clear search"
           >
-            <X className="sidebar-search-clear-icon" aria-hidden />
+            <X size={12} aria-hidden />
           </button>
         )}
       </div>
@@ -488,7 +598,7 @@ export function Sidebar({
               />
             </div>
           )}
-          {groupedWorkspaces.map((group) => {
+          {filteredGroupedWorkspaces.map((group) => {
             const groupId = group.id;
             const showGroupHeader = Boolean(groupId) || hasWorkspaceGroups;
             const toggleId = groupId ?? (showGroupHeader ? UNGROUPED_COLLAPSE_ID : null);
@@ -534,6 +644,7 @@ export function Sidebar({
                     <WorkspaceCard
                       key={entry.id}
                       workspace={entry}
+                      workspaceName={renderHighlightedName(entry.name)}
                       isActive={entry.id === activeWorkspaceId}
                       isCollapsed={isCollapsed}
                       addMenuOpen={addMenuOpen}
@@ -641,8 +752,12 @@ export function Sidebar({
               </WorkspaceGroup>
             );
           })}
-          {!groupedWorkspaces.length && (
-            <div className="empty">Add a workspace to start.</div>
+          {!filteredGroupedWorkspaces.length && (
+            <div className="empty">
+              {isSearchActive
+                ? "No projects match your search."
+                : "Add a workspace to start."}
+            </div>
           )}
         </div>
         )}
@@ -662,6 +777,14 @@ export function Sidebar({
         onOpenSettings={onOpenSettings}
         onOpenDebug={onOpenDebug}
         showDebugButton={showDebugButton}
+        showAccountSwitcher={showAccountSwitcher}
+        accountLabel={accountButtonLabel}
+        accountActionLabel={accountActionLabel}
+        accountDisabled={accountSwitchDisabled}
+        accountSwitching={accountSwitching}
+        accountCancelDisabled={accountCancelDisabled}
+        onSwitchAccount={onSwitchAccount}
+        onCancelSwitchAccount={onCancelSwitchAccount}
       />
     </aside>
   );

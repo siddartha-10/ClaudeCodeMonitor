@@ -1,7 +1,7 @@
 {
   "name": "claude-code-monitor",
   "private": true,
-  "version": "0.7.16",
+  "version": "0.0.1",
   "author": "Siddartha (siddartha-10)",
   "description": "Monitor the situation of your Claude agents",
   "repository": {

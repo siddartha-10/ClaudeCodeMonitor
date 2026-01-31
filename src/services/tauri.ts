@@ -22,6 +22,22 @@ import type {
   ReviewTarget,
 } from "../types";
 
+/**
+ * Detect whether an error is due to a missing Tauri invoke bridge.
+ * This can happen when the app runs outside of Tauri (e.g., in a browser).
+ */
+export function isMissingTauriInvokeError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("__tauri_internals__") ||
+    msg.includes("window.__tauri") ||
+    msg.includes("invoke bridge")
+  );
+}
+
 export async function pickWorkspacePath(): Promise<string | null> {
   const selection = await open({ directory: true, multiple: false });
   if (!selection || Array.isArray(selection)) {
@@ -47,7 +63,14 @@ export async function pickImageFiles(): Promise<string[]> {
 }
 
 export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
-  return invoke<WorkspaceInfo[]>("list_workspaces");
+  try {
+    return await invoke<WorkspaceInfo[]>("list_workspaces");
+  } catch (error) {
+    if (isMissingTauriInvokeError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function addWorkspace(
@@ -337,6 +360,18 @@ export async function getGlobalRateLimits() {
   );
 }
 
+export async function getAccountInfo(workspaceId: string) {
+  return invoke<Record<string, unknown> | null>("account_read", { workspaceId });
+}
+
+export async function runClaudeLogin(workspaceId: string) {
+  return invoke<{ output: string }>("claude_login", { workspaceId });
+}
+
+export async function cancelClaudeLogin(workspaceId: string) {
+  return invoke<{ canceled: boolean }>("claude_login_cancel", { workspaceId });
+}
+
 export async function getSkillsList(workspaceId: string) {
   return invoke<any>("skills_list", { workspaceId });
 }
@@ -505,6 +540,10 @@ export async function startDictation(
   return invoke("dictation_start", { preferredLanguage });
 }
 
+export async function requestDictationPermission(): Promise<boolean> {
+  return invoke("dictation_request_permission");
+}
+
 export async function stopDictation(): Promise<DictationSessionState> {
   return invoke("dictation_stop");
 }
@@ -613,4 +652,40 @@ export async function getClaudeTasks(
   sessionId: string,
 ): Promise<ClaudeTasksResponse> {
   return invoke<ClaudeTasksResponse>("get_claude_tasks", { sessionId });
+}
+
+// File operations types
+export type FileScope = "workspace" | "global";
+export type FileKind = "claude_md" | "settings";
+
+export type FileReadResponse = {
+  exists: boolean;
+  content: string;
+  truncated: boolean;
+};
+
+export async function fileRead(
+  scope: FileScope,
+  kind: FileKind,
+  workspaceId?: string | null,
+): Promise<FileReadResponse> {
+  return invoke<FileReadResponse>("file_read", {
+    scope,
+    kind,
+    workspaceId: workspaceId ?? null,
+  });
+}
+
+export async function fileWrite(
+  scope: FileScope,
+  kind: FileKind,
+  content: string,
+  workspaceId?: string | null,
+): Promise<void> {
+  return invoke("file_write", {
+    scope,
+    kind,
+    content,
+    workspaceId: workspaceId ?? null,
+  });
 }

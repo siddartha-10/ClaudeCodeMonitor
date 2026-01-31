@@ -51,19 +51,28 @@ function formatCreditsLabel(accountRateLimits: RateLimitSnapshot | null) {
 
 export function getUsageLabels(
   accountRateLimits: RateLimitSnapshot | null,
+  showRemaining = false,
 ): UsageLabels {
   const usagePercent = accountRateLimits?.primary?.usedPercent;
   const globalUsagePercent = accountRateLimits?.secondary?.usedPercent;
   const sonnetUsagePercent = accountRateLimits?.sonnet?.usedPercent;
   const sessionPercent =
-    typeof usagePercent === "number" ? clampPercent(usagePercent) : null;
+    typeof usagePercent === "number"
+      ? showRemaining
+        ? 100 - clampPercent(usagePercent)
+        : clampPercent(usagePercent)
+      : null;
   const weeklyPercent =
     typeof globalUsagePercent === "number"
-      ? clampPercent(globalUsagePercent)
+      ? showRemaining
+        ? 100 - clampPercent(globalUsagePercent)
+        : clampPercent(globalUsagePercent)
       : null;
   const sonnetPercent =
     typeof sonnetUsagePercent === "number"
-      ? clampPercent(sonnetUsagePercent)
+      ? showRemaining
+        ? 100 - clampPercent(sonnetUsagePercent)
+        : clampPercent(sonnetUsagePercent)
       : null;
 
   return {
