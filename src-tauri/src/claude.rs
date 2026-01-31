@@ -457,15 +457,25 @@ pub(crate) async fn search_thread(
     let entries = load_sessions_index(&workspace_entry);
     let query_lower = query.to_lowercase();
 
+    // Filter out archived threads (same as list_threads)
+    let archived_ids = archived_threads_path(&state)
+        .ok()
+        .and_then(|path| read_archived_threads(&path).ok())
+        .and_then(|archived| archived.get(&workspace_id).cloned())
+        .unwrap_or_default();
+    let archived_set: std::collections::HashSet<_> = archived_ids.into_iter().collect();
+
     let matching: Vec<_> = entries
         .into_iter()
+        .filter(|entry| !archived_set.contains(&entry.session_id))
         .filter(|entry| entry.session_id.to_lowercase().contains(&query_lower))
         .collect();
 
     eprintln!(
-        "[debug:sessions] search_thread: query='{}' matched {} sessions",
+        "[debug:sessions] search_thread: query='{}' matched {} sessions (excluded {} archived)",
         query,
-        matching.len()
+        matching.len(),
+        archived_set.len()
     );
 
     let mut threads = Vec::new();

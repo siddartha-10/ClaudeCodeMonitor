@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { Sidebar } from "./Sidebar";
+
+afterEach(() => {
+  cleanup();
+});
 
 const baseProps = {
   workspaces: [],
@@ -58,37 +62,59 @@ const baseProps = {
 };
 
 describe("Sidebar", () => {
-  it("toggles the search bar from the header icon", () => {
+  it("renders the always-visible session search input", () => {
+    render(<Sidebar {...baseProps} />);
+
+    // Search input should always be visible
+    const input = screen.getByPlaceholderText("Search by session ID...");
+    expect(input).toBeTruthy();
+  });
+
+  it("allows typing in the search input and clearing it", () => {
     vi.useFakeTimers();
     render(<Sidebar {...baseProps} />);
 
-    const toggleButton = screen.getByRole("button", { name: "Toggle search" });
-    expect(screen.queryByLabelText("Search projects")).toBeNull();
+    const input = screen.getByPlaceholderText("Search by session ID...") as HTMLInputElement;
 
+    // Type in the search input
     act(() => {
-      fireEvent.click(toggleButton);
-    });
-    const input = screen.getByLabelText("Search projects") as HTMLInputElement;
-    expect(input).toBeTruthy();
-
-    act(() => {
-      fireEvent.change(input, { target: { value: "alpha" } });
+      fireEvent.change(input, { target: { value: "abc123" } });
       vi.runOnlyPendingTimers();
     });
-    expect(input.value).toBe("alpha");
+    expect(input.value).toBe("abc123");
 
+    // Clear button should appear when there's text
+    const clearButton = screen.getByLabelText("Clear search");
+    expect(clearButton).toBeTruthy();
+
+    // Clicking clear should empty the input
     act(() => {
-      fireEvent.click(toggleButton);
+      fireEvent.click(clearButton);
       vi.runOnlyPendingTimers();
     });
-    expect(screen.queryByLabelText("Search projects")).toBeNull();
+    expect(input.value).toBe("");
+
+    vi.useRealTimers();
+  });
+
+  it("clears search on Escape key", () => {
+    vi.useFakeTimers();
+    render(<Sidebar {...baseProps} />);
+
+    const input = screen.getByPlaceholderText("Search by session ID...") as HTMLInputElement;
 
     act(() => {
-      fireEvent.click(toggleButton);
+      fireEvent.change(input, { target: { value: "test" } });
       vi.runOnlyPendingTimers();
     });
-    const reopened = screen.getByLabelText("Search projects") as HTMLInputElement;
-    expect(reopened.value).toBe("");
+    expect(input.value).toBe("test");
+
+    act(() => {
+      fireEvent.keyDown(input, { key: "Escape" });
+      vi.runOnlyPendingTimers();
+    });
+    expect(input.value).toBe("");
+
     vi.useRealTimers();
   });
 });

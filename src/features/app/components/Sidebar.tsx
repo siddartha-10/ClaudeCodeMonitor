@@ -175,39 +175,39 @@ export function Sidebar({
     setIsSearching(true);
     searchTimerRef.current = setTimeout(async () => {
       try {
-        const results: Array<{ workspaceId: string; thread: ThreadSummary }> = [];
-        for (const workspace of workspaces) {
-          if (cancelled) return;
+        // Search all workspaces in parallel for better performance
+        const searchPromises = workspaces.map(async (workspace) => {
           try {
             const response = (await searchThreadService(
               workspace.id,
               trimmed,
             )) as Record<string, unknown>;
-            if (cancelled) return;
             const result = (response.result ?? response) as Record<string, unknown>;
             const data = Array.isArray(result?.data)
               ? (result.data as Record<string, unknown>[])
               : [];
-            for (const thread of data) {
+            return data.map((thread) => {
               const id = String(thread?.id ?? "");
               const preview = String(thread?.preview ?? "").trim();
               const updatedAt = Number(thread?.updatedAt ?? thread?.createdAt ?? 0);
-              if (id) {
-                results.push({
-                  workspaceId: workspace.id,
-                  thread: {
-                    id,
-                    name: preview.length > 38 ? `${preview.slice(0, 38)}…` : preview || id.slice(0, 12),
-                    updatedAt,
-                  },
-                });
-              }
-            }
+              return {
+                workspaceId: workspace.id,
+                thread: {
+                  id,
+                  name: preview.length > 38 ? `${preview.slice(0, 38)}…` : preview || id.slice(0, 12),
+                  updatedAt,
+                },
+              };
+            }).filter((item) => item.thread.id);
           } catch {
             // workspace may not be connected, skip
+            return [];
           }
-        }
+        });
+
+        const resultsArrays = await Promise.all(searchPromises);
         if (!cancelled) {
+          const results = resultsArrays.flat();
           setSearchResults(results);
         }
       } catch (error) {
