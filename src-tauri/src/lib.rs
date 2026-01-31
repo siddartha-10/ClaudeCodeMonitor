@@ -1,4 +1,6 @@
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::Manager;
+#[cfg(target_os = "macos")]
+use tauri::{RunEvent, WindowEvent};
 
 mod backend;
 mod claude;
@@ -175,9 +177,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::Reopen { .. } = event {
-            if let Some(window) = app_handle.get_webview_window("main") {
+    app.run(|_app_handle, _event| {
+        // macOS dock icon click handling
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = _event {
+            if let Some(window) = _app_handle.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
             }

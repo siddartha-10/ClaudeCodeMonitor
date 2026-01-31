@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, State};
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
+#[cfg(target_os = "macos")]
 use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::{interval, sleep, timeout};
