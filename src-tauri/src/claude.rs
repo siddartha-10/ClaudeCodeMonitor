@@ -294,6 +294,7 @@ pub(crate) async fn rewind_thread_files(
     command.arg("--rewind-files").arg(&message_id);
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true); // Ensure child is killed if dropped (e.g., on timeout)
 
     let output = timeout(Duration::from_secs(60), command.output())
         .await

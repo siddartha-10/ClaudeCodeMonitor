@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { FolderOpen, Search } from "lucide-react";
 import X from "lucide-react/dist/esm/icons/x";
-import { searchThread as searchThreadService } from "../../../services/tauri";
 import { SidebarCornerActions } from "./SidebarCornerActions";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
@@ -23,6 +22,7 @@ import { useCollapsedGroups } from "../hooks/useCollapsedGroups";
 import { useSidebarMenus } from "../hooks/useSidebarMenus";
 import { useSidebarScrollFade } from "../hooks/useSidebarScrollFade";
 import { useThreadRows } from "../hooks/useThreadRows";
+import { useThreadSearch } from "../hooks/useThreadSearch";
 import { getUsageLabels } from "../utils/usageLabels";
 import { formatRelativeTimeShort } from "../../../utils/time";
 
@@ -145,7 +145,6 @@ export function Sidebar({
   const [expandedWorkspaces, setExpandedWorkspaces] = useState(
     new Set<string>(),
   );
-  const [searchQuery, setSearchQuery] = useState("");
   const [addMenuAnchor, setAddMenuAnchor] = useState<{
     workspaceId: string;
     top: number;
@@ -154,80 +153,15 @@ export function Sidebar({
   } | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [searchResults, setSearchResults] = useState<
-    Array<{ workspaceId: string; thread: ThreadSummary }> | null
-  >(null);
-  const [isSearching, setIsSearching] = useState(false);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (searchTimerRef.current) {
-      clearTimeout(searchTimerRef.current);
-    }
-    let cancelled = false;
-    const trimmed = searchQuery.trim();
-    if (!trimmed) {
-      setSearchResults(null);
-      setIsSearching(false);
-      return;
-    }
-    setIsSearching(true);
-    searchTimerRef.current = setTimeout(async () => {
-      try {
-        // Search all workspaces in parallel for better performance
-        const searchPromises = workspaces.map(async (workspace) => {
-          try {
-            const response = (await searchThreadService(
-              workspace.id,
-              trimmed,
-            )) as Record<string, unknown>;
-            const result = (response.result ?? response) as Record<string, unknown>;
-            const data = Array.isArray(result?.data)
-              ? (result.data as Record<string, unknown>[])
-              : [];
-            return data.map((thread) => {
-              const id = String(thread?.id ?? "");
-              const preview = String(thread?.preview ?? "").trim();
-              const updatedAt = Number(thread?.updatedAt ?? thread?.createdAt ?? 0);
-              return {
-                workspaceId: workspace.id,
-                thread: {
-                  id,
-                  name: preview.length > 38 ? `${preview.slice(0, 38)}…` : preview || id.slice(0, 12),
-                  updatedAt,
-                },
-              };
-            }).filter((item) => item.thread.id);
-          } catch {
-            // workspace may not be connected, skip
-            return [];
-          }
-        });
-
-        const resultsArrays = await Promise.all(searchPromises);
-        if (!cancelled) {
-          const results = resultsArrays.flat();
-          setSearchResults(results);
-        }
-      } catch (error) {
-        console.error("[debug:sessions] search failed:", error);
-        if (!cancelled) {
-          setSearchResults([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsSearching(false);
-        }
-      }
-    }, 300);
-    return () => {
-      cancelled = true;
-      if (searchTimerRef.current) {
-        clearTimeout(searchTimerRef.current);
-      }
-    };
-  }, [searchQuery, workspaces]);
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchResults,
+    isSearching,
+    searchInputRef,
+    clearSearch,
+    blurSearch,
+  } = useThreadSearch({ workspaces });
   const { collapsedGroups, toggleGroupCollapse } = useCollapsedGroups(
     COLLAPSED_GROUPS_STORAGE_KEY,
   );
@@ -415,17 +349,14 @@ export function Sidebar({
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               setSearchQuery("");
-              searchInputRef.current?.blur();
+              blurSearch();
             }
           }}
         />
         {searchQuery && (
           <button
             className="sidebar-search-clear"
-            onClick={() => {
-              setSearchQuery("");
-              searchInputRef.current?.focus();
-            }}
+            onClick={clearSearch}
             aria-label="Clear search"
           >
             <X size={12} aria-hidden />
