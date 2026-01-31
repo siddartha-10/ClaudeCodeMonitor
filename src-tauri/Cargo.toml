@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-monitor"
-version = "0.1.0"
+version = "0.0.1"
 description = "Monitor the situation of your Claude agents"
 authors = ["Siddartha (siddartha-10)"]
 edition = "2021"
@@ -28,6 +28,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 tokio = { version = "1", features = ["fs", "net", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-dialog = "2"

@@ -7,6 +7,11 @@
   grid-row: 4;
   height: var(--terminal-panel-height, 220px);
   -webkit-app-region: no-drag;
+  --terminal-background: var(--surface-debug);
+  --terminal-foreground: var(--text-stronger);
+  --terminal-cursor: var(--text-stronger);
+  --terminal-selection: rgba(100, 200, 255, 0.25);
+  --terminal-font-family: var(--code-font-family);
 }
 
 .terminal-panel-resizer {
@@ -35,7 +40,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 20px;
+  padding: 6px 12px;
   font-size: 12px;
 }
 
@@ -46,6 +51,7 @@
   flex: 1;
   min-width: 0;
   overflow-x: auto;
+  padding: 2px 0;
 }
 
 .terminal-tab {
@@ -55,7 +61,7 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 11px;
   letter-spacing: 0.04em;
@@ -85,7 +91,7 @@
   border: 1px dashed var(--border-strong);
   background: transparent;
   color: var(--text-muted);
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
@@ -96,7 +102,7 @@
   min-height: 0;
   display: flex;
   overflow: hidden;
-  padding: 0 20px 12px;
+  padding: 0;
 }
 
 .terminal-body > .terminal-shell {
@@ -119,7 +125,7 @@
   height: 100%;
   border-radius: 0;
   overflow: hidden;
-  background: transparent;
+  background: var(--terminal-background);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
 }
@@ -127,18 +133,23 @@
 .terminal-surface .xterm,
 .terminal-surface .xterm-screen,
 .terminal-surface .xterm-viewport {
-  background: transparent !important;
+  background: var(--terminal-background) !important;
 }
 
 .terminal-surface .xterm {
   height: 100%;
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 0 6px;
+  padding: 8px 12px 8px;
 }
 
 .terminal-surface .xterm-viewport {
   height: 100% !important;
+}
+
+.terminal-surface .composition-view {
+  background: var(--terminal-background);
+  color: var(--terminal-foreground);
 }
 
 .terminal-overlay {

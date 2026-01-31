@@ -266,6 +266,53 @@ describe("threadReducer", () => {
     }
   });
 
+  it("inserts a reasoning summary boundary between sections", () => {
+    const withSummary = threadReducer(initialState, {
+      type: "appendReasoningSummary",
+      threadId: "thread-1",
+      itemId: "reasoning-1",
+      delta: "Exploring files",
+    });
+    const withBoundary = threadReducer(withSummary, {
+      type: "appendReasoningSummaryBoundary",
+      threadId: "thread-1",
+      itemId: "reasoning-1",
+    });
+    const withSecondSummary = threadReducer(withBoundary, {
+      type: "appendReasoningSummary",
+      threadId: "thread-1",
+      itemId: "reasoning-1",
+      delta: "Searching for routes",
+    });
+
+    const item = withSecondSummary.itemsByThread["thread-1"]?.[0];
+    expect(item?.kind).toBe("reasoning");
+    if (item?.kind === "reasoning") {
+      expect(item.summary).toBe("Exploring files\n\nSearching for routes");
+    }
+  });
+
+  it("appends a deduped context compacted message", () => {
+    const withCompacted = threadReducer(initialState, {
+      type: "appendContextCompacted",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+    const withDuplicate = threadReducer(withCompacted, {
+      type: "appendContextCompacted",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+
+    const items = withDuplicate.itemsByThread["thread-1"] ?? [];
+    expect(items).toHaveLength(1);
+    expect(items[0]?.kind).toBe("message");
+    if (items[0]?.kind === "message") {
+      expect(items[0].text).toBe("Context compacted.");
+      expect(items[0].id).toBe("context-compacted-turn-1");
+    }
+  });
+
   it("ignores tool output deltas when the item is not a tool", () => {
     const message: ConversationItem = {
       id: "tool-1",

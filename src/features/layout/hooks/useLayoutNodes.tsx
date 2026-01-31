@@ -21,6 +21,7 @@ import { TerminalPanel } from "../../terminal/components/TerminalPanel";
 import type { ApprovalRuleInfo } from "../../../utils/approvalRules";
 import type {
   AccessMode,
+  AccountSnapshot,
   BranchInfo,
   ClaudeTask,
   CollaborationModeOption,
@@ -48,7 +49,7 @@ import type {
   TurnPlan,
   WorkspaceInfo,
 } from "../../../types";
-import type { WorkspaceHomeRun, WorkspaceRunMode } from "../../workspaces/hooks/useWorkspaceHome";
+import type { WorkspaceHomeRun, WorkspaceHomeRunInstance, WorkspaceRunMode } from "../../workspaces/hooks/useWorkspaceHome";
 import type { UpdateState } from "../../update/hooks/useUpdater";
 import type { TerminalSessionState } from "../../terminal/hooks/useTerminalSession";
 import type { TerminalTab } from "../../terminal/hooks/useTerminalTabs";
@@ -65,6 +66,11 @@ type GitDiffViewerItem = {
   path: string;
   status: string;
   diff: string;
+  isImage?: boolean;
+  oldImageData?: string | null;
+  newImageData?: string | null;
+  oldImageMime?: string | null;
+  newImageMime?: string | null;
 };
 
 type WorktreeRenameState = {
@@ -106,6 +112,11 @@ type LayoutNodesOptions = {
   activeThreadId: string | null;
   activeItems: ConversationItem[];
   activeRateLimits: RateLimitSnapshot | null;
+  usageShowRemaining: boolean;
+  accountInfo: AccountSnapshot | null;
+  onSwitchAccount: () => void;
+  onCancelSwitchAccount: () => void;
+  accountSwitching: boolean;
   codeBlockCopyUseModifier: boolean;
   permissionDenials: PermissionDenial[];
   userInputRequests: RequestUserInputRequest[];
@@ -136,6 +147,7 @@ type LayoutNodesOptions = {
   onToggleWorkspaceCollapse: (workspaceId: string, collapsed: boolean) => void;
   onSelectThread: (workspaceId: string, threadId: string) => void;
   onDeleteThread: (workspaceId: string, threadId: string) => void;
+  onSyncThread: (workspaceId: string, threadId: string) => void;
   pinThread: (workspaceId: string, threadId: string) => boolean;
   unpinThread: (workspaceId: string, threadId: string) => void;
   isThreadPinned: (workspaceId: string, threadId: string) => boolean;
@@ -370,6 +382,8 @@ type LayoutNodesOptions = {
   // Workspace Home props
   showWorkspaceHome: boolean;
   workspaceRuns: WorkspaceHomeRun[];
+  recentThreadInstances: WorkspaceHomeRunInstance[];
+  recentThreadsUpdatedAt: number | null;
   workspacePrompt: string;
   setWorkspacePrompt: (value: string) => void;
   startWorkspaceRun: (images?: string[]) => Promise<boolean>;
@@ -381,6 +395,17 @@ type LayoutNodesOptions = {
   workspaceRunError: string | null;
   workspaceRunSubmitting: boolean;
   handleSelectWorkspaceInstance: (workspaceId: string, threadId: string) => void;
+  // CLAUDE.md editor props
+  claudeMdContent: string;
+  claudeMdExists: boolean;
+  claudeMdTruncated: boolean;
+  claudeMdIsLoading: boolean;
+  claudeMdIsSaving: boolean;
+  claudeMdError: string | null;
+  claudeMdIsDirty: boolean;
+  onClaudeMdContentChange: (value: string) => void;
+  onClaudeMdRefresh: () => void;
+  onClaudeMdSave: () => void;
 };
 
 type LayoutNodesResult = {
@@ -427,6 +452,11 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       activeWorkspaceId={options.activeWorkspaceId}
       activeThreadId={options.activeThreadId}
       accountRateLimits={options.activeRateLimits}
+      usageShowRemaining={options.usageShowRemaining}
+      accountInfo={options.accountInfo}
+      onSwitchAccount={options.onSwitchAccount}
+      onCancelSwitchAccount={options.onCancelSwitchAccount}
+      accountSwitching={options.accountSwitching}
       onOpenSettings={options.onOpenSettings}
       onOpenDebug={options.onOpenDebug}
       showDebugButton={options.showDebugButton}
@@ -440,6 +470,7 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       onToggleWorkspaceCollapse={options.onToggleWorkspaceCollapse}
       onSelectThread={options.onSelectThread}
       onDeleteThread={options.onDeleteThread}
+      onSyncThread={options.onSyncThread}
       pinThread={options.pinThread}
       unpinThread={options.unpinThread}
       isThreadPinned={options.isThreadPinned}
@@ -576,6 +607,8 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       <WorkspaceHome
         workspace={options.activeWorkspace}
         runs={options.workspaceRuns}
+        recentThreadInstances={options.recentThreadInstances}
+        recentThreadsUpdatedAt={options.recentThreadsUpdatedAt}
         prompt={options.workspacePrompt}
         onPromptChange={options.setWorkspacePrompt}
         onStartRun={options.startWorkspaceRun}
@@ -607,6 +640,16 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
         onDismissDictationHint={options.onDismissDictationHint}
         dictationTranscript={options.dictationTranscript}
         onDictationTranscriptHandled={options.onDictationTranscriptHandled}
+        claudeMdContent={options.claudeMdContent}
+        claudeMdExists={options.claudeMdExists}
+        claudeMdTruncated={options.claudeMdTruncated}
+        claudeMdIsLoading={options.claudeMdIsLoading}
+        claudeMdIsSaving={options.claudeMdIsSaving}
+        claudeMdError={options.claudeMdError}
+        claudeMdIsDirty={options.claudeMdIsDirty}
+        onClaudeMdContentChange={options.onClaudeMdContentChange}
+        onClaudeMdRefresh={options.onClaudeMdRefresh}
+        onClaudeMdSave={options.onClaudeMdSave}
       />
     ) : null;
 

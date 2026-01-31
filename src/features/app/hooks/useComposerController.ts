@@ -11,8 +11,12 @@ export function useComposerController({
   isReviewing,
   steerEnabled,
   connectWorkspace,
+  startThreadForWorkspace,
   sendUserMessage,
+  sendUserMessageToThread,
   startReview,
+  startResume,
+  startStatus,
 }: {
   activeThreadId: string | null;
   activeWorkspaceId: string | null;
@@ -21,8 +25,20 @@ export function useComposerController({
   isReviewing: boolean;
   steerEnabled: boolean;
   connectWorkspace: (workspace: WorkspaceInfo) => Promise<void>;
+  startThreadForWorkspace: (
+    workspaceId: string,
+    options?: { activate?: boolean },
+  ) => Promise<string | null>;
   sendUserMessage: (text: string, images?: string[]) => Promise<void>;
+  sendUserMessageToThread: (
+    workspace: WorkspaceInfo,
+    threadId: string,
+    text: string,
+    images?: string[],
+  ) => Promise<void>;
   startReview: (text: string) => Promise<void>;
+  startResume: (text: string) => Promise<void>;
+  startStatus: (text: string) => Promise<void>;
 }) {
   const [composerDraftsByThread, setComposerDraftsByThread] = useState<
     Record<string, string>
@@ -54,8 +70,12 @@ export function useComposerController({
     steerEnabled,
     activeWorkspace,
     connectWorkspace,
+    startThreadForWorkspace,
     sendUserMessage,
+    sendUserMessageToThread,
     startReview,
+    startResume,
+    startStatus,
     clearActiveImages,
   });
 

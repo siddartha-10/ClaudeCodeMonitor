@@ -352,6 +352,33 @@ describe("useThreads UX integration", () => {
     expect(interruptMock).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves list state when requested", async () => {
+    const listThreadsMock = vi.mocked(listThreads);
+    listThreadsMock.mockResolvedValue({
+      result: {
+        data: [],
+        nextCursor: null,
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useThreads({
+        activeWorkspace: workspace,
+        onWorkspaceConnected: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(workspace, {
+        preserveState: true,
+      });
+    });
+
+    // When preserveState is true, loading state should not be changed
+    // The threadListLoadingByWorkspace should remain undefined/false
+    expect(result.current.threadListLoadingByWorkspace["ws-1"]).toBeFalsy();
+  });
+
   it("orders thread lists, applies custom names, and keeps pin ordering stable", async () => {
     const listThreadsMock = vi.mocked(listThreads);
     listThreadsMock.mockResolvedValue({

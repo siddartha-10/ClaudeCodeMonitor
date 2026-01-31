@@ -1,4 +1,5 @@
 import type {
+  AccountSnapshot,
   ConversationItem,
   PermissionDenial,
   RequestUserInputRequest,
@@ -118,6 +119,7 @@ export type ThreadState = {
   permissionDenials: PermissionDenial[];
   userInputRequests: RequestUserInputRequest[];
   tokenUsageByThread: Record<string, ThreadTokenUsage>;
+  accountByWorkspace: Record<string, AccountSnapshot | null>;
   planByThread: Record<string, TurnPlan | null>;
   lastAgentMessageByThread: Record<string, { text: string; timestamp: number }>;
 };
@@ -172,6 +174,11 @@ export type ThreadAction =
       itemId: string;
       delta: string;
     }
+  | {
+      type: "appendReasoningSummaryBoundary";
+      threadId: string;
+      itemId: string;
+    }
   | { type: "appendReasoningContent"; threadId: string; itemId: string; delta: string }
   | { type: "appendToolOutput"; threadId: string; itemId: string; delta: string }
   | { type: "setThreads"; workspaceId: string; threads: ThreadSummary[] }
@@ -196,9 +203,19 @@ export type ThreadAction =
   | { type: "removeUserInputRequest"; requestId: number; workspaceId: string }
   | { type: "clearUserInputRequestsForThread"; threadId: string; workspaceId: string }
   | { type: "setThreadTokenUsage"; threadId: string; tokenUsage: ThreadTokenUsage }
+  | {
+      type: "setAccountInfo";
+      workspaceId: string;
+      account: AccountSnapshot | null;
+    }
   | { type: "setActiveTurnId"; threadId: string; turnId: string | null }
   | { type: "setThreadPlan"; threadId: string; plan: TurnPlan | null }
   | { type: "clearThreadPlan"; threadId: string }
+  | {
+      type: "appendContextCompacted";
+      threadId: string;
+      turnId: string;
+    }
   | {
       type: "setLastAgentMessage";
       threadId: string;
@@ -215,6 +232,7 @@ export const initialState: ThreadState = {
   threadParentById: {},
   threadStatusById: {},
   threadListLoadingByWorkspace: {},
+  accountByWorkspace: {},
   threadListPagingByWorkspace: {},
   threadListCursorByWorkspace: {},
   activeTurnIdByThread: {},
@@ -248,6 +266,19 @@ function mergeStreamingText(existing: string, delta: string) {
     }
   }
   return `${existing}${delta}`;
+}
+
+function addSummaryBoundary(existing: string) {
+  if (!existing) {
+    return existing;
+  }
+  if (existing.endsWith("\n\n")) {
+    return existing;
+  }
+  if (existing.endsWith("\n")) {
+    return `${existing}\n`;
+  }
+  return `${existing}\n\n`;
 }
 
 function dropLatestLocalReviewStart(list: ConversationItem[]) {
@@ -757,6 +788,34 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         },
       };
     }
+    case "appendReasoningSummaryBoundary": {
+      const list = state.itemsByThread[action.threadId] ?? [];
+      const index = list.findIndex((entry) => entry.id === action.itemId);
+      const base =
+        index >= 0 && list[index].kind === "reasoning"
+          ? (list[index] as ConversationItem)
+          : {
+              id: action.itemId,
+              kind: "reasoning",
+              summary: "",
+              content: "",
+            };
+      const updated: ConversationItem = {
+        ...base,
+        summary: addSummaryBoundary("summary" in base ? base.summary : ""),
+      } as ConversationItem;
+      const next = index >= 0 ? [...list] : [...list, updated];
+      if (index >= 0) {
+        next[index] = updated;
+      }
+      return {
+        ...state,
+        itemsByThread: {
+          ...state.itemsByThread,
+          [action.threadId]: prepareThreadItems(next, action.threadId),
+        },
+      };
+    }
     case "appendReasoningContent": {
       const list = state.itemsByThread[action.threadId] ?? [];
       const index = list.findIndex((entry) => entry.id === action.itemId);
@@ -915,6 +974,14 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           [action.threadId]: action.tokenUsage,
         },
       };
+    case "setAccountInfo":
+      return {
+        ...state,
+        accountByWorkspace: {
+          ...state.accountByWorkspace,
+          [action.workspaceId]: action.account,
+        },
+      };
     case "setThreadPlan":
       return {
         ...state,
@@ -931,6 +998,26 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           [action.threadId]: null,
         },
       };
+    case "appendContextCompacted": {
+      const list = state.itemsByThread[action.threadId] ?? [];
+      const id = `context-compacted-${action.turnId}`;
+      if (list.some((entry) => entry.id === id)) {
+        return state;
+      }
+      const compactedMessage: ConversationItem = {
+        id,
+        kind: "message",
+        role: "assistant",
+        text: "Context compacted.",
+      };
+      return {
+        ...state,
+        itemsByThread: {
+          ...state.itemsByThread,
+          [action.threadId]: prepareThreadItems([...list, compactedMessage]),
+        },
+      };
+    }
     default:
       return state;
   }

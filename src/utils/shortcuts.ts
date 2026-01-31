@@ -112,7 +112,8 @@ export function buildShortcutValue(event: KeyboardEvent): string | null {
     return null;
   }
   const hasPrimaryModifier = event.metaKey || event.ctrlKey || event.altKey;
-  if (!hasPrimaryModifier) {
+  const allowShiftOnly = event.shiftKey && key === "tab";
+  if (!hasPrimaryModifier && !allowShiftOnly) {
     return null;
   }
   const modifiers = [];
@@ -146,6 +147,17 @@ export function matchesShortcut(event: KeyboardEvent, value: string | null | und
     parsed.alt === event.altKey &&
     parsed.shift === event.shiftKey
   );
+}
+
+export function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+}
+
+export function getDefaultInterruptShortcut(): string {
+  return isMacPlatform() ? "ctrl+c" : "ctrl+shift+c";
 }
 
 export function toMenuAccelerator(value: string | null | undefined): string | null {
