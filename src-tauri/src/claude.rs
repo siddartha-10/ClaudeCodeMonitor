@@ -3,7 +3,6 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -758,6 +757,7 @@ pub(crate) async fn global_rate_limits() -> Result<Value, String> {
     let usage: Value = Client::new()
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
         .timeout(Duration::from_secs(10))
         .send()
         .await
@@ -785,27 +785,34 @@ pub(crate) async fn global_rate_limits() -> Result<Value, String> {
 
 #[cfg(target_os = "macos")]
 async fn read_oauth_token() -> Option<String> {
-    let user = env::var("USER").unwrap_or_default();
+    // Don't filter by account - $USER may be empty in Tauri context
     let output = Command::new("security")
-        .args(["find-generic-password", "-a", &user, "-s", "Claude Code-credentials", "-w"])
+        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
         .output()
         .await
         .ok()?;
     if !output.status.success() {
-        return None;
+        return read_oauth_token_from_file().await;
     }
     let raw = String::from_utf8_lossy(&output.stdout);
-    let creds: ClaudeCredentials = serde_json::from_str(raw.trim()).ok()?;
-    Some(creds.claude_ai_oauth?.access_token)
+    if let Ok(creds) = serde_json::from_str::<ClaudeCredentials>(raw.trim()) {
+        if let Some(oauth) = creds.claude_ai_oauth {
+            return Some(oauth.access_token);
+        }
+    }
+    read_oauth_token_from_file().await
 }
 
 #[cfg(not(target_os = "macos"))]
 async fn read_oauth_token() -> Option<String> {
-    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).ok()?;
-    let path = PathBuf::from(home).join(".claude").join(".credentials.json");
+    read_oauth_token_from_file().await
+}
+
+async fn read_oauth_token_from_file() -> Option<String> {
+    let path = resolve_default_claude_home()?.join(".credentials.json");
     let raw = fs::read_to_string(&path).ok()?;
     let creds: ClaudeCredentials = serde_json::from_str(&raw).ok()?;
-    Some(creds.claude_ai_oauth?.access_token)
+    creds.claude_ai_oauth.map(|oauth| oauth.access_token)
 }
 
 #[tauri::command]
